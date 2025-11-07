@@ -1,0 +1,40 @@
+services:
+  db:              # sobe o banco PostgreSQL
+    image: postgres:16  
+    environment:
+      POSTGRES_DB: app_db
+      POSTGRES_USER: app_user
+      POSTGRES_PASSWORD: app_password
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    
+    healthcheck: 
+       test: ["CMD-SHELL", "pg_isready -U app_user -d app_db || exit 1"]
+       interval: 5s
+       timeout: 3s
+       retries: 10
+
+
+  web:                       # Sobe o Django, conecta o banco, aplica migrações e inicia o servidor
+    build: .                  # constroi a imagem do container usando o Dockerfile que esta nessa mesma pasta
+    env_file: .env              
+    environment:
+      DATABASE_URL: postgresql://app_user:app_password@db:5432/app_db   # string de conexão com o banco
+      SECRET_KEY: dev-only-change-me       #chave de segurança do django
+      DEBUG: "1"
+      ALLOWED_HOSTS: "*"                   # permite acesso de qualquer host
+    volumes:
+      - .:/app                            # monta a pasta do projeto local (.) dentro da pasta /app do container
+    ports:
+      - "8000:8000"                      # abre a porta do container (8000) para a mesma do seu PC permitindo acessar Django em localhost:8000
+    depends_on:                   # inicia o container web depois que o db estiver rodando
+      db:
+        condition: service_healthy
+    command: bash -lc "python manage.py migrate --noinput && python manage.py runserver 0.0.0.0:8000"
+
+
+volumes:
+    pgdata:
