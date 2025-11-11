@@ -14,3 +14,5 @@ dj-database-url
 
 # É uma biblioteca que permite ao Django servir arquivos estaticos diretamente do container
 whitenoise
+
+python-dotenv
