@@ -21,10 +21,6 @@ services:
   web:                       # Sobe o Django, conecta o banco, aplica migrações e inicia o servidor
     build: .                  # constroi a imagem do container usando o Dockerfile que esta nessa mesma pasta
     env_file: .env              
-    environment:
-      DATABASE_URL: postgresql://app_user:app_password@db:5432/app_db   # string de conexão com o banco
-      DEBUG: "1"
-      ALLOWED_HOSTS: "*"                   # permite acesso de qualquer host
     volumes:
       - .:/app                            # monta a pasta do projeto local (.) dentro da pasta /app do container
     ports:
