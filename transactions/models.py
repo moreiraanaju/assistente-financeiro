@@ -12,7 +12,10 @@ class Category(models.Model):
 
 class Transacao(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
-    category = models.ForeignKey("Category", on_delete=models.PROTECT)
+    category = models.ForeignKey(
+        Category, on_delete=models.SET_NULL,
+        null=True,
+        blank=True)
     message = models.ForeignKey("whatsapp.Message", on_delete=models.PROTECT, blank=True)
 
     description = models.CharField(max_length=255)
