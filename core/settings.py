@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     'users.apps.UsersConfig',
     'transactions.apps.TransactionsConfig',
     'whatsapp.apps.WhatsappConfig',
+    'rest_framework',
 
 ]
 
