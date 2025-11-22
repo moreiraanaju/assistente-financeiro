@@ -15,7 +15,7 @@ class Transacao(models.Model):
         Category, on_delete=models.SET_NULL,
         null=True,
         blank=True)
-    message = models.ForeignKey("whatsapp.Message", on_delete=models.PROTECT, blank=True)
+    message = models.ForeignKey("whatsapp.Message", on_delete=models.PROTECT, null=True, blank=True)
 
     description = models.CharField(max_length=255)
     date_transaction = models.DateTimeField(default=timezone.now, db_index=True)
