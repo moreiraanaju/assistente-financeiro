@@ -1,111 +1,131 @@
-# whatsapp/views.py
-import os
 import json
 import logging
 import requests
-from typing import Optional
+import os
+from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.http import HttpResponse, JsonResponse
+from django.contrib.auth import get_user_model
+from django.utils import timezone
+
+# IMPORTANDO A LÓGICA DA MAIN (Não reescrevemos nada!)
+from transactions.parser import parse_message
+from transactions.serializers import TransacaoSerializer
 
 logger = logging.getLogger(__name__)
+User = get_user_model()
 
-# ENV vars
-TRANSACTION_ENDPOINT = os.environ.get("TRANSACTION_ENDPOINT", "http://web:8000/transacao/")
-AI_API_URL = os.environ.get("AI_API_URL", "").strip()
-AI_API_KEY = os.environ.get("AI_API_KEY", "").strip()
-EVOLUTION_BOT_KEY = os.environ.get("EVOLUTION_BOT_KEY", "").strip()  # optional: validate incoming requests
+# Configs do .env
+EVOLUTION_API_TOKEN = os.environ.get("EVOLUTION_API_TOKEN")
+EVOLUTION_INSTANCE_NAME = os.environ.get("EVOLUTION_INSTANCE_NAME")
+EVOLUTION_API_BASE = os.environ.get("EVOLUTION_API_BASE") # Ex: https://api.seusite.com
+EVOLUTION_BOT_KEY = os.environ.get("EVOLUTION_BOT_KEY") # Sua senha de segurança
 
-def safe_trunc(s: object, limit: int = 500) -> str:
-    s = str(s) if not isinstance(s, str) else s
-    return s if len(s) <= limit else s[:limit] + "...(truncated)"
+def send_evolution_message(number, text):
+    """Envia mensagem ativa para a Evolution API"""
+    if not text:
+        return
 
-def call_ai_model(user_id: str, user_text: str) -> str:
-    """
-    Chama um modelo de IA (ex.: OpenAI Chat Completions).
-    Ajuste payload se usar outro provedor.
-    """
-    if not AI_API_URL or not AI_API_KEY:
-        # fallback simples
-        return f"Recebi: {user_text} (IA indisponível no momento)."
-
-    payload = {
-        "model": "gpt-4o-mini",  # ajuste conforme sua conta
-        "messages": [
-            {"role": "system", "content": "Você é um assistente financeiro conciso e claro."},
-            {"role": "user", "content": user_text}
-        ],
-        "max_tokens": 300
-    }
+    url = f"{EVOLUTION_API_BASE}/message/sendText/{EVOLUTION_INSTANCE_NAME}"
     headers = {
-        "Authorization": f"Bearer {AI_API_KEY}",
+        "apikey": EVOLUTION_API_TOKEN,
         "Content-Type": "application/json"
     }
+    payload = {
+        "number": number,
+        "options": {"delay": 1200, "presence": "composing"},
+        "textMessage": {"text": text}
+    }
+    
     try:
-        r = requests.post(AI_API_URL, headers=headers, json=payload, timeout=12)
-        r.raise_for_status()
-        data = r.json()
-        # Assumindo formato OpenAI-style:
-        text = data["choices"][0]["message"]["content"]
-        return text.strip()
+        requests.post(url, json=payload, headers=headers, timeout=10)
     except Exception as e:
-        logger.exception("AI API call failed")
-        return f"Desculpe, não consegui gerar resposta agora. ({e})"
+        logger.error(f"Falha ao enviar msg para Evolution: {e}")
 
 @csrf_exempt
 def evolution_webhook(request):
-    if request.method == "GET":
-        return HttpResponse("OK")
+    # 1. Validação de Segurança (Basic Auth ou Token na URL/Header)
+    # A Evolution pode mandar o token no header ou query params, ajuste conforme sua config
+    api_key_received = request.headers.get("apikey") or request.GET.get("apikey")
+    
+    # Se configurou chave, valida. Se não, deixa passar (dev mode)
+    if EVOLUTION_BOT_KEY and api_key_received != EVOLUTION_BOT_KEY:
+        # Tenta checar se veio no payload (algumas versões mandam diferente)
+        return HttpResponse("Unauthorized", status=401)
 
-    # opcional: validar Authorization header se quiser
-    if EVOLUTION_BOT_KEY:
-        auth = request.headers.get("Authorization", "")
-        if EVOLUTION_BOT_KEY not in auth:
-            return JsonResponse({"error": "unauthorized"}, status=401)
+    if request.method != "POST":
+        return HttpResponse("Method Not Allowed", status=405)
 
     try:
-        payload = json.loads(request.body.decode("utf-8") or "{}")
-    except Exception:
-        logger.exception("invalid json in webhook")
-        return JsonResponse({"error": "invalid json"}, status=400)
+        payload = json.loads(request.body)
+    except json.JSONDecodeError:
+        return HttpResponse("Invalid JSON", status=400)
 
-    logger.info("evolution webhook payload: %s", safe_trunc(json.dumps(payload)))
-
-    # extrair mensagens (compatível com evolution / whatsapp-like)
-    messages = []
+    # 2. Extração dos Dados (O "Trabalho Sujo" de limpar o JSON da Evolution)
+    # Navega até achar a mensagem real
+    msg_data = {}
     try:
-        for e in payload.get("entry", []) or []:
-            for ch in e.get("changes", []) or []:
-                val = ch.get("value") or {}
-                for m in val.get("messages", []) or []:
-                    messages.append(m)
-        if not messages:
-            messages = payload.get("messages") or []
-        if isinstance(payload.get("message"), dict):
-            messages.append(payload.get("message"))
-    except Exception:
-        logger.exception("error extracting messages")
-        messages = []
+        # Tenta estrutura padrão da Evolution/Baileys
+        data = payload.get("data", {})
+        if not data:
+            # Fallback para estrutura estilo Meta se a Evolution estiver em modo proxy
+            entry = payload.get("entry", [{}])[0]
+            changes = entry.get("changes", [{}])[0]
+            data = changes.get("value", {}).get("messages", [{}])[0]
 
-    if not messages:
-        # reply vazio aceitável
-        return JsonResponse({"reply": "Não recebi mensagem."})
+        # Pega o texto
+        text = data.get("message", {}).get("conversation") or \
+               data.get("message", {}).get("extendedTextMessage", {}).get("text") or \
+               data.get("body") # as vezes vem direto no root
 
-    msg = messages[0]
-    from_number = msg.get("from") or msg.get("sender") or ""
-    text_body = ""
-    if isinstance(msg.get("text"), dict):
-        text_body = msg["text"].get("body", "")
+        # Pega o remetente (Remote JID)
+        remote_jid = data.get("key", {}).get("remoteJid") or data.get("from")
+        
+        if not text or not remote_jid:
+            # Pode ser status, ack, ou mensagem de mídia que ignoramos agora
+            return HttpResponse("Ignored event")
+
+        # Limpa o numero (remove @s.whatsapp.net)
+        number = remote_jid.split("@")[0]
+
+    except Exception as e:
+        logger.error(f"Erro ao parsear payload: {e}")
+        return HttpResponse("Payload Error", status=200) # Retorna 200 pra não travar a API
+
+    # 3. Lógica de Negócio (Usa o que já existe em transactions!)
+    reply_text = ""
+    
+    # Tenta entender se é transação
+    parsed_data = parse_message(text)
+
+    if parsed_data:
+        # É uma transação! Vamos salvar.
+        tipo_banco = "IN" if parsed_data["tipo"] == "R" else "OUT"
+        
+        transaction_data = {
+            "description": parsed_data["descricao"],
+            "value": parsed_data["valor"],
+            "type": tipo_banco,
+            "date_transaction": timezone.now(),
+        }
+
+        serializer = TransacaoSerializer(data=transaction_data)
+        
+        if serializer.is_valid():
+            # TODO: Buscar usuario pelo telefone 'number'. Por enquanto, pegamos o primeiro.
+            user = User.objects.first() 
+            if user:
+                serializer.save(user=user)
+                reply_text = f"✅ Sucesso! {parsed_data['tipo']} de R$ {parsed_data['valor']:.2f} registrado."
+            else:
+                reply_text = "Erro: Usuário não identificado no sistema."
+        else:
+            reply_text = "Entendi que é um valor, mas houve erro ao salvar."
     else:
-        text_body = msg.get("body") or str(msg.get("text") or "")
+        # 4. Não é transação? Chama a IA (Lógica da Carol aqui)
+        # Por enquanto, um echo simples para fechar a sprint
+        reply_text = "Não entendi. Tente '15.00 almoço' ou '-20 uber'."
 
-    # opcional: postar a transação em outro serviço (pode ser responsabilidade de outro time)
-    try:
-        requests.post(TRANSACTION_ENDPOINT, json={"usuario": from_number, "mensagem": text_body}, timeout=6)
-    except Exception:
-        logger.info("transacao post failed (ignored)")
+    # 5. Resposta Ativa
+    send_evolution_message(number, reply_text)
 
-    # gerar resposta via IA
-    reply_text = call_ai_model(user_id=from_number, user_text=text_body)
-
-    # retornar para o Evolution; ele enviará ao WhatsApp automaticamente
-    return JsonResponse({"reply": reply_text})
+    return HttpResponse("OK")
