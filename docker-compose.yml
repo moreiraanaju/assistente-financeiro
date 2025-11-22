@@ -17,13 +17,14 @@ services:
       timeout: 3s
       retries: 10
 
-  web:
+  web:                       # Sobe o Django
     build: .
+    env_file: .env
+    volumes:
+      - .:/app
     ports:
       - "8000:8000"
     command: python manage.py runserver 0.0.0.0:8000
-    env_file:
-      - .env
     depends_on:
       db:
         condition: service_healthy

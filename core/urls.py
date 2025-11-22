@@ -1,15 +1,15 @@
 
 from django.contrib import admin
-from django.urls import path
+from django.urls import path, include
 from django.http import HttpResponse
-from django.urls import include, path
-
 
 def home(request):
-    return HttpResponse("<h1>Assistente Financeiro <h1>")
+    return HttpResponse("<h1>Assistente Financeiro</h1>")
 
 urlpatterns = [
     path('', home),
     path('admin/', admin.site.urls),
-    path('whatsapp', include('whatsapp.urls')),
+    path('whatsapp/', include('whatsapp.urls')),  
+    path('api/', include('transactions.urls')),
 ]
+

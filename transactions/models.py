@@ -2,7 +2,6 @@ from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
-
 class Category(models.Model):
     name = models.CharField(max_length=80, unique=True)
 
@@ -12,8 +11,11 @@ class Category(models.Model):
 
 class Transacao(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
-    category = models.ForeignKey("Category", on_delete=models.PROTECT)
-    message = models.ForeignKey("whatsapp.Message", on_delete=models.PROTECT, blank=True)
+    category = models.ForeignKey(
+        Category, on_delete=models.SET_NULL,
+        null=True,
+        blank=True)
+    message = models.ForeignKey("whatsapp.Message", on_delete=models.PROTECT, null=True, blank=True)
 
     description = models.CharField(max_length=255)
     date_transaction = models.DateTimeField(default=timezone.now, db_index=True)
