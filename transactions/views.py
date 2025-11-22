@@ -1,4 +1,8 @@
-# A view recebe a requisicao HTTP - chama o serializer - interage com o banco de dados via models - devolve uma resposta HTTP
+
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+import json
+from .parser import parse_message
 
 from django.contrib.auth import get_user_model
 from rest_framework.views import APIView
@@ -7,6 +11,47 @@ from rest_framework import status
 
 from .models import Transacao
 from .serializers import TransacaoSerializer
+
+# --- CÓDIGO DA BRANCH DO GUSTAVO (PARSER) ---
+@csrf_exempt
+def webhook(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Use POST"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        text = data.get("body")
+
+        if not text:
+            return JsonResponse({
+                "success": False,
+                "message": "Corpo da mensagem ausente."
+            }, status=400)
+
+    except Exception:
+        return JsonResponse({"error": "JSON inválido"}, status=400)
+
+    parsed = parse_message(text)
+
+    if not parsed:
+        return JsonResponse({
+            "success": False,
+            "message": "Formato inválido. Tente: +100 mercado ou -50 lanche."
+        }, status=200)
+
+    reply_message = (
+        f"Transação {parsed['tipo']} de R$ {parsed['valor']:.2f} "
+        f"registrada com sucesso! 💰"
+    )
+
+    return JsonResponse({
+        "success": True,
+        "reply": reply_message,
+        "transaction_data": parsed
+    }, status=200)
+
+# --- CÓDIGO ANA JU ORIGINAL (SERIALIZER + DRF) ---  
+# A view recebe a requisicao HTTP - chama o serializer - interage com o banco de dados via models - devolve uma resposta HTTP
 
 User = get_user_model()
 
@@ -28,26 +73,3 @@ class TransacaoCreateView(APIView):
             "mensagem": "Erro ao criar transação.",
             "erros": serializer.errors
         }, status=status.HTTP_400_BAD_REQUEST)
-
-
-# Quando for integrar com o wpp precisa ajustar essa view para que:
-# 1.Leia o JSON enviado pela API do wpp e descubra o numero de telefone
-# Supondo que o JSON venha: { "phone": "5511...", "text": "gastei 50", ... }
-# telefone_recebido = data.get("phone_number")
-
-# 2. Achar o usuário dono desse telefone
-#try:
-#            perfil = UserProfile.objects.get(phone_number=telefone_recebido)
-#             usuario_dono = perfil.user
-#       except UserProfile.DoesNotExist:
-#            return Response({"erro": "Telefone não cadastrado"}, status=404)
-
-# 3. Passar os dados para o serializer
-# serializer = TransacaoSerializer(data=data)
-
-# if serializer.is_valid():
-            # 4. Salva usando o usuário encontrado pelo telefone
-           #serializer.save(user=usuario_dono) 
-           #return Response(serializer.data, status=201)
-            
-    # return Response(serializer.errors, status=400)
