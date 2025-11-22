@@ -1,14 +1,9 @@
 from django.urls import path
 from . import views
-from .views import TransacaoCreateView
+from .views import WebhookTransactionView
 
 urlpatterns = [    
   # roda da feature gustavo (webhook)
-    path("webhook/", views.webhook, name="webhook"),
-]
-
-urlpatterns = [
-  # rota da Main (api direta ana ju)
-    path('transacao/', TransacaoCreateView.as_view(), name='criar_transacao'),
+  path("webhook/", WebhookTransactionView.as_view(), name="webhook"),
 ]
 

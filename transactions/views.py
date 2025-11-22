@@ -1,75 +1,78 @@
-
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-import json
-from .parser import parse_message
-
-from django.contrib.auth import get_user_model
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from django.contrib.auth import get_user_model
+from django.utils import timezone
 
 from .models import Transacao
 from .serializers import TransacaoSerializer
-
-# --- CÓDIGO DA BRANCH DO GUSTAVO (PARSER) ---
-@csrf_exempt
-def webhook(request):
-    if request.method != "POST":
-        return JsonResponse({"error": "Use POST"}, status=405)
-
-    try:
-        data = json.loads(request.body)
-        text = data.get("body")
-
-        if not text:
-            return JsonResponse({
-                "success": False,
-                "message": "Corpo da mensagem ausente."
-            }, status=400)
-
-    except Exception:
-        return JsonResponse({"error": "JSON inválido"}, status=400)
-
-    parsed = parse_message(text)
-
-    if not parsed:
-        return JsonResponse({
-            "success": False,
-            "message": "Formato inválido. Tente: +100 mercado ou -50 lanche."
-        }, status=200)
-
-    reply_message = (
-        f"Transação {parsed['tipo']} de R$ {parsed['valor']:.2f} "
-        f"registrada com sucesso! 💰"
-    )
-
-    return JsonResponse({
-        "success": True,
-        "reply": reply_message,
-        "transaction_data": parsed
-    }, status=200)
-
-# --- CÓDIGO ANA JU ORIGINAL (SERIALIZER + DRF) ---  
-# A view recebe a requisicao HTTP - chama o serializer - interage com o banco de dados via models - devolve uma resposta HTTP
+from .parser import parse_message 
 
 User = get_user_model()
 
-class TransacaoCreateView(APIView):
+class WebhookTransactionView(APIView):
+    # Permite acesso sem autenticação (pois o webhook do Wpp não manda token de usuário)
+    # Futuramente, validaremos um token de API no header
+    permission_classes = [] 
 
     def post(self, request):
+        # 1. RECEBIMENTO: Pega o JSON vindo do WhatsApp
+        # O padrão do gustavo era esperar um campo "body"
+        data = request.data
+        text_message = data.get("body") or data.get("message") 
 
-# TODO: Implementar busca de usuário por telefone para o Bot do WhatsApp (comentario detalhado no fim da pagina)
+        if not text_message:
+            return Response(
+                {"error": "Campo 'body' ou 'message' ausente no JSON."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        serializer = TransacaoSerializer(data=request.data)
-        if serializer.is_valid():
-            usuario = request.user  # !!! o endpoint só vai funcionar se mandar autenticação na requisição (login/senha ou token) !!!
-            serializer.save(user=usuario)
+        # 2. PARSER: Usa a função regex do gustavo
+        parsed_data = parse_message(text_message)
+
+        if not parsed_data:
+            # Se não entendeu, retorna 200 com msg de ajuda (padrão de chatbot para não ficar tentando reenvio)
             return Response({
-                "mensagem": "Transação criada com sucesso!",
-                "dados": serializer.data
+                "reply": "Desculpe, não entendi. Tente algo como: '15.50 almoço' ou '-50 gasolina'."
+            }, status=status.HTTP_200_OK)
+
+        # 3. ADAPTER: Converte o formato do Parser para o formato do Serializer
+        # Parser retorna: 'tipo' (R/D), 'valor', 'descricao'
+        # Model espera: 'type' (IN/OUT), 'value', 'description'
+        
+        tipo_banco = "IN" if parsed_data["tipo"] == "R" else "OUT"
+        
+        transaction_data = {
+            "description": parsed_data["descricao"],
+            "value": parsed_data["valor"],
+            "type": tipo_banco,
+            "date_transaction": timezone.now(),
+            "category": None # Por enquanto deixamos null
+        }
+
+        # 4. SALVAMENTO: Usa o Serializer para validar e salvar
+        serializer = TransacaoSerializer(data=transaction_data)
+        
+        if serializer.is_valid():
+            # Gambiarra Técnica para Testes: Pega o primeiro usuário do banco
+            # TODO: Em produção, buscar o usuário pelo telefone vindo no JSON
+            usuario_padrao = User.objects.first()
+            if not usuario_padrao:
+                return Response({"error": "Nenhum usuário no banco."}, status=500)
+
+            serializer.save(user=usuario_padrao)
+
+            # 5. RESPOSTA: Monta a mensagem amigável 
+            reply_message = (
+                f"Transação {parsed_data['tipo']} de R$ {parsed_data['valor']:.2f} "
+                f"salva com sucesso! 💰"
+            )
+            
+            return Response({
+                "success": True,
+                "reply": reply_message,
+                "debug_data": serializer.data
             }, status=status.HTTP_201_CREATED)
-        return Response({
-            "mensagem": "Erro ao criar transação.",
-            "erros": serializer.errors
-        }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Se o serializer falhar (ex: valor negativo estranho, etc)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
