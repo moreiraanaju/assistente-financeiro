@@ -6,8 +6,6 @@ from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-
-# IMPORTANDO A LÓGICA DA MAIN (Não reescrevemos nada!)
 from transactions.parser import parse_message
 from transactions.serializers import TransacaoSerializer
 
@@ -17,8 +15,8 @@ User = get_user_model()
 # Configs do .env
 EVOLUTION_API_TOKEN = os.environ.get("EVOLUTION_API_TOKEN")
 EVOLUTION_INSTANCE_NAME = os.environ.get("EVOLUTION_INSTANCE_NAME")
-EVOLUTION_API_BASE = os.environ.get("EVOLUTION_API_BASE") # Ex: https://api.seusite.com
-EVOLUTION_BOT_KEY = os.environ.get("EVOLUTION_BOT_KEY") # Sua senha de segurança
+EVOLUTION_API_BASE = os.environ.get("EVOLUTION_API_BASE") 
+EVOLUTION_BOT_KEY = os.environ.get("EVOLUTION_BOT_KEY") 
 
 def send_evolution_message(number, text):
     """Envia mensagem ativa para a Evolution API"""
@@ -43,6 +41,7 @@ def send_evolution_message(number, text):
 
 @csrf_exempt
 def evolution_webhook(request):
+
     # 1. Validação de Segurança (Basic Auth ou Token na URL/Header)
     # A Evolution pode mandar o token no header ou query params, ajuste conforme sua config
     api_key_received = request.headers.get("apikey") or request.GET.get("apikey")
@@ -93,7 +92,7 @@ def evolution_webhook(request):
 
     # 3. Lógica de Negócio (Usa o que já existe em transactions!)
     reply_text = ""
-    
+
     # Tenta entender se é transação
     parsed_data = parse_message(text)
 

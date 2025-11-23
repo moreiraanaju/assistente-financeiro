@@ -19,6 +19,8 @@ services:
 
   web:                       # Sobe o Django
     build: .
+    environment: 
+      - PYTHONUNBUFFERED=1
     env_file: .env
     volumes:
       - .:/app
