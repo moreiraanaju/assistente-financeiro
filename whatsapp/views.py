@@ -2,53 +2,66 @@ import json
 import logging
 import requests
 import os
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+
+# Imports da Main
 from transactions.parser import parse_message
 from transactions.serializers import TransacaoSerializer
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
-# Configs do .env
-EVOLUTION_API_TOKEN = os.environ.get("EVOLUTION_API_TOKEN")
+# Configs
+EVOLUTION_API_BASE = os.environ.get("EVOLUTION_API_BASE")
 EVOLUTION_INSTANCE_NAME = os.environ.get("EVOLUTION_INSTANCE_NAME")
-EVOLUTION_API_BASE = os.environ.get("EVOLUTION_API_BASE") 
-EVOLUTION_BOT_KEY = os.environ.get("EVOLUTION_BOT_KEY") 
+EVOLUTION_API_TOKEN = os.environ.get("EVOLUTION_API_TOKEN")
+EVOLUTION_BOT_KEY = os.environ.get("EVOLUTION_BOT_KEY")
 
 def send_evolution_message(number, text):
     """Envia mensagem ativa para a Evolution API"""
-    if not text:
-        return
+    if not text: return
 
-    url = f"{EVOLUTION_API_BASE}/message/sendText/{EVOLUTION_INSTANCE_NAME}"
+    base = (EVOLUTION_API_BASE or "").strip().rstrip('/')
+    instance = (EVOLUTION_INSTANCE_NAME or "").strip()
+    token = (EVOLUTION_API_TOKEN or "").strip()
+
+    url = f"{base}/message/sendText/{instance}"
+    
     headers = {
-        "apikey": EVOLUTION_API_TOKEN,
+        "apikey": token,
         "Content-Type": "application/json"
     }
+    
     payload = {
         "number": number,
-        "options": {"delay": 1200, "presence": "composing"},
-        "textMessage": {"text": text}
+        "text": text,  
+        "delay": 1200,
+        "linkPreview": False
     }
     
+    print(f"\n>>> 📤 [ENVIO] Tentando enviar para: {number}")
+    
     try:
-        requests.post(url, json=payload, headers=headers, timeout=10)
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        print(f">>> 📡 [ENVIO] Status Evolution: {response.status_code}")
+        
+        # Se der erro, mostra o porquê
+        if response.status_code != 200 and response.status_code != 201:
+            print(f">>> 📄 [ENVIO] Erro: {response.text}\n")
+        else:
+            print(f">>> 🚀 [SUCESSO] Mensagem entregue!\n")
+
     except Exception as e:
-        logger.error(f"Falha ao enviar msg para Evolution: {e}")
+        print(f">>> ❌ [ENVIO] Erro Crítico: {e}")
 
 @csrf_exempt
 def evolution_webhook(request):
-
-    # 1. Validação de Segurança (Basic Auth ou Token na URL/Header)
-    # A Evolution pode mandar o token no header ou query params, ajuste conforme sua config
+    # 1. Segurança
     api_key_received = request.headers.get("apikey") or request.GET.get("apikey")
-    
-    # Se configurou chave, valida. Se não, deixa passar (dev mode)
     if EVOLUTION_BOT_KEY and api_key_received != EVOLUTION_BOT_KEY:
-        # Tenta checar se veio no payload (algumas versões mandam diferente)
         return HttpResponse("Unauthorized", status=401)
 
     if request.method != "POST":
@@ -59,47 +72,50 @@ def evolution_webhook(request):
     except json.JSONDecodeError:
         return HttpResponse("Invalid JSON", status=400)
 
-    # 2. Extração dos Dados (O "Trabalho Sujo" de limpar o JSON da Evolution)
-    # Navega até achar a mensagem real
-    msg_data = {}
-    try:
-        # Tenta estrutura padrão da Evolution/Baileys
-        data = payload.get("data", {})
-        if not data:
-            # Fallback para estrutura estilo Meta se a Evolution estiver em modo proxy
-            entry = payload.get("entry", [{}])[0]
-            changes = entry.get("changes", [{}])[0]
-            data = changes.get("value", {}).get("messages", [{}])[0]
+    # 2. Debug da Estrutura 
+    print("\n>>> 📦 [RECEBIDO] JSON Bruto (Resumido):")
+    # Imprime só as chaves pra gente entender a estrutura sem poluir demais
+    print(payload.keys()) 
 
-        # Pega o texto
-        text = data.get("message", {}).get("conversation") or \
-               data.get("message", {}).get("extendedTextMessage", {}).get("text") or \
-               data.get("body") # as vezes vem direto no root
+    # 3. Extração
+    data = payload.get("data", {})
+    
+    # Proteção contra mensagens do próprio bot (Loop Infinito)
+    if data.get("key", {}).get("fromMe") == True:
+        print(">>> 🛑 Mensagem ignorada (enviada por mim mesmo).")
+        return HttpResponse("OK")
 
-        # Pega o remetente (Remote JID)
-        remote_jid = data.get("key", {}).get("remoteJid") or data.get("from")
+    # Extrai Telefone
+    remote_jid = data.get("key", {}).get("remoteJid") or data.get("remoteJid")
+    if not remote_jid:
+        print(">>> ⚠️ Ignorado: Sem RemoteJid")
+        return JsonResponse({"status": "ignored", "reason": "no_jid"})
         
-        if not text or not remote_jid:
-            # Pode ser status, ack, ou mensagem de mídia que ignoramos agora
-            return HttpResponse("Ignored event")
+    number = remote_jid.split("@")[0]
 
-        # Limpa o numero (remove @s.whatsapp.net)
-        number = remote_jid.split("@")[0]
+    # Extrai Texto (Tenta os 3 lugares mais comuns)
+    msg_obj = data.get("message", {})
+    
+    text = msg_obj.get("conversation") # Texto puro
+    if not text:
+        text = msg_obj.get("extendedTextMessage", {}).get("text") # Texto com preview
+    if not text:
+        text = data.get("body") # Legado
+        
+    print(f">>> 🕵️ [EXTRAÇÃO] Número: {number} | Texto Encontrado: '{text}'")
 
-    except Exception as e:
-        logger.error(f"Erro ao parsear payload: {e}")
-        return HttpResponse("Payload Error", status=200) # Retorna 200 pra não travar a API
+    if not text:
+        print(">>> ⚠️ Falha: Texto veio vazio ou None.")
+        return JsonResponse({"reply": "Nenhuma mensagem válida recebida."})
 
-    # 3. Lógica de Negócio (Usa o que já existe em transactions!)
+    # 4. Lógica de Negócio
+    parsed_data = parse_message(text)
     reply_text = ""
 
-    # Tenta entender se é transação
-    parsed_data = parse_message(text)
-
     if parsed_data:
-        # É uma transação! Vamos salvar.
-        tipo_banco = "IN" if parsed_data["tipo"] == "R" else "OUT"
+        print(f">>> 💰 [PARSER] Entendido: {parsed_data}")
         
+        tipo_banco = "IN" if parsed_data["tipo"] == "R" else "OUT"
         transaction_data = {
             "description": parsed_data["descricao"],
             "value": parsed_data["valor"],
@@ -108,23 +124,22 @@ def evolution_webhook(request):
         }
 
         serializer = TransacaoSerializer(data=transaction_data)
-        
         if serializer.is_valid():
-            # TODO: Buscar usuario pelo telefone 'number'. Por enquanto, pegamos o primeiro.
-            user = User.objects.first() 
+            user = User.objects.first()
             if user:
                 serializer.save(user=user)
                 reply_text = f"✅ Sucesso! {parsed_data['tipo']} de R$ {parsed_data['valor']:.2f} registrado."
+                print(">>> ✅ [BANCO] Salvo com sucesso!")
             else:
-                reply_text = "Erro: Usuário não identificado no sistema."
+                reply_text = "Erro: Sem usuário cadastrado."
         else:
-            reply_text = "Entendi que é um valor, mas houve erro ao salvar."
+            reply_text = "Erro ao salvar. Verifique o formato."
+            print(f">>> ❌ [SERIALIZER] Erros: {serializer.errors}")
     else:
-        # 4. Não é transação? Chama a IA (Lógica da Carol aqui)
-        # Por enquanto, um echo simples para fechar a sprint
-        reply_text = "Não entendi. Tente '15.00 almoço' ou '-20 uber'."
+        reply_text = "Não entendi. Tente '15.00 almoço'."
+        print(">>> ❓ [PARSER] Não entendeu o padrão.")
 
-    # 5. Resposta Ativa
+    # 5. Envio da Resposta
     send_evolution_message(number, reply_text)
 
     return HttpResponse("OK")
