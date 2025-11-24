@@ -3,10 +3,11 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-
 from .models import Transacao
 from .serializers import TransacaoSerializer
 from .parser import parse_message 
+from rest_framework import generics
+from .services import identificar_categoria
 
 User = get_user_model()
 
@@ -76,3 +77,15 @@ class WebhookTransactionView(APIView):
         
         # Se o serializer falhar (ex: valor negativo estranho, etc)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+# atualização da sprint 2 do backend
+class TransactionCreateView(generics.CreateAPIView):
+    queryset = Transaction.objects.all()
+    serializer_class = TransactionSerializer
+
+    def perform_create(self, serializer):
+        descricao = self.request.data.get("descricao", "")
+        categoria = identificar_categoria(descricao)
+
+        serializer.save(categoria=categoria)
