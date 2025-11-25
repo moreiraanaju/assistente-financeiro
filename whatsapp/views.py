@@ -6,10 +6,14 @@ from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from transactions.models import Category 
+from transactions.services import identificar_categoria
 
-# Imports da Main
 from transactions.parser import parse_message
 from transactions.serializers import TransacaoSerializer
+
+
+# Aqui controlamos o Webhook que recebe a mensagem da Evolution API
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -114,29 +118,56 @@ def evolution_webhook(request):
 
     if parsed_data:
         print(f">>> 💰 [PARSER] Entendido: {parsed_data}")
+
+        # --- LÓGICA DE CATEGORIA (NOVA) ---
+        categoria = None
         
+        # 1. Tenta pegar a categoria explicita na mensagem (ex: "transporte")
+        nome_categoria_msg = parsed_data.get("categoria_texto")
+        if nome_categoria_msg:
+            categoria = Category.objects.filter(name__iexact=nome_categoria_msg).first()
+        
+        # 2. Se não achou, tenta identificar automaticamente pela descrição
+        if not categoria:
+            categoria = identificar_categoria(parsed_data["descricao"])
+
+        # 3. Fallback: Se ainda assim for None, tenta "Outros"
+        if not categoria:
+            categoria = Category.objects.filter(name="Outros").first()
+        # ----------------------------------
+
         tipo_banco = "IN" if parsed_data["tipo"] == "R" else "OUT"
+        
         transaction_data = {
             "description": parsed_data["descricao"],
             "value": parsed_data["valor"],
             "type": tipo_banco,
             "date_transaction": timezone.now(),
+            "category": categoria.id if categoria else None # Passa o ID se existir
         }
 
         serializer = TransacaoSerializer(data=transaction_data)
+        
         if serializer.is_valid():
-            user = User.objects.first()
+            user = User.objects.first() # TODO: Pegar user pelo telefone no futuro
             if user:
                 serializer.save(user=user)
-                reply_text = f"✅ Sucesso! {parsed_data['tipo']} de R$ {parsed_data['valor']:.2f} registrado."
+                
+                # --- RESPOSTA DINÂMICA (NOVA) ---
+                if categoria and categoria.name != "Outros":
+                    reply_text = f"✅ Salvo em *{categoria.name}*! \nValor: R$ {parsed_data['valor']:.2f}"
+                else:
+                    reply_text = f"⚠️ Categoria não identificada. \n✅ Salvo em *Outros*: R$ {parsed_data['valor']:.2f}"
+                # --------------------------------
+                
                 print(">>> ✅ [BANCO] Salvo com sucesso!")
             else:
-                reply_text = "Erro: Sem usuário cadastrado."
+                reply_text = "Erro: Sem usuário cadastrado no sistema."
         else:
             reply_text = "Erro ao salvar. Verifique o formato."
             print(f">>> ❌ [SERIALIZER] Erros: {serializer.errors}")
     else:
-        reply_text = "Não entendi. Tente '15.00 almoço'."
+        reply_text = "Não entendi. Tente exemplo: '15.00 almoço'."
         print(">>> ❓ [PARSER] Não entendeu o padrão.")
 
     # 5. Envio da Resposta

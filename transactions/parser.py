@@ -22,16 +22,15 @@ def parse_message(text):
                 tipo = "D"
                 break
 
-    # Regex pra capturar número com sinal opcional
+    # Regex para capturar número
     match = re.search(r"([+-]?\d+(?:\.\d+)?)", original)
-
     if not match:
         return None
 
     numero_str = match.group(1)
     valor = float(numero_str)
 
-    # Ajusta tipo baseado no sinal
+    # Ajuste de tipo com base no sinal
     if numero_str.startswith("-"):
         valor = abs(valor)
         tipo = "D"
@@ -41,15 +40,27 @@ def parse_message(text):
     if not tipo:
         tipo = "R" if valor > 0 else "D"
 
-    # Remove apenas o número mantendo demais partes da frase
-    descricao = (original[:match.start()] + original[match.end():]).strip()
-    descricao = re.sub(r"\s+", " ", descricao)  # Remove espaços duplicados
+    # Remove só o número e mantém o resto
+    texto_sem_numero = (original[:match.start()] + original[match.end():]).strip()
+    texto_sem_numero = re.sub(r"\s+", " ", texto_sem_numero)
 
-    if not descricao:
+    if not texto_sem_numero:
         descricao = "sem descrição"
+        categoria_texto = None
+    else:
+        partes = texto_sem_numero.split(" ")
+
+        # Caso tenha mais de 1 palavra → última vira categoria
+        if len(partes) >= 2:
+            categoria_texto = partes[-1]
+            descricao = " ".join(partes[:-1])
+        else:
+            descricao = partes[0]
+            categoria_texto = None
 
     return {
         "valor": valor,
         "descricao": descricao,
-        "tipo": tipo
+        "tipo": tipo,
+        "categoria_texto": categoria_texto
     }

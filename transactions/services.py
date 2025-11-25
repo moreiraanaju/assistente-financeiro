@@ -1,5 +1,5 @@
 from unidecode import unidecode
-from .models import Categoria
+from .models import Category
 
 
 MAPEAMENTO = {
@@ -14,7 +14,7 @@ MAPEAMENTO = {
         "uber", "99", "taxi", "onibus", "gasolina", "posto", "estacionamento"
     ],
     "Casa": [
-        "luz", "agua", "internet", "gas", "condominio", "claro", "vivo", "net"
+        "luz", "agua", "internet", "gas", "condominio", "claro", "vivo", "net", "aluguel"
     ],
     "Saúde": [
         "farmacia", "remedio", "medico", "consulta", "exame"
@@ -38,14 +38,14 @@ def normalizar_texto(texto: str) -> str:           #coloca as palavras no padrã
     return unidecode(texto).lower().strip()
 
 
-def identificar_categoria(descricao: str) -> Categoria:
+def identificar_categoria(descricao: str) -> Category:
     descricao_normalizada = normalizar_texto(descricao)       
     for categoria, palavras in MAPEAMENTO.items():
         for palavra in palavras:
             if palavra in descricao_normalizada:
                 try:
-                    return Categoria.objects.get(nome=categoria)
-                except Categoria.DoesNotExist:        
+                    return Category.objects.get(name=categoria)
+                except Category.DoesNotExist:        
                     pass 
 
-    return Categoria.objects.get(nome="Outros")
+    return Category.objects.get(name="Outros")

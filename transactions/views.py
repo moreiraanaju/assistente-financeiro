@@ -3,11 +3,15 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from .models import Transacao
+from .models import Transacao, Category  
 from .serializers import TransacaoSerializer
 from .parser import parse_message 
 from rest_framework import generics
 from .services import identificar_categoria
+
+
+# Aqui controlamos a API REST, se alguém mandar um POST via Postman ou Frontend por exemplo, cai aqui
+
 
 User = get_user_model()
 
@@ -34,26 +38,34 @@ class WebhookTransactionView(APIView):
         if not parsed_data:
             # Se não entendeu, retorna 200 com msg de ajuda (padrão de chatbot para não ficar tentando reenvio)
             return Response({
-                "reply": "Desculpe, não entendi. Tente algo como: '15.50 almoço' ou '-50 gasolina'."
+                "reply": "Desculpe, não entendi. Tente algo como: '+15.50 almoço alimentação' ou '-50 gasolina transporte'."
             }, status=status.HTTP_200_OK)
 
         # 3. ADAPTER: Converte o formato do Parser para o formato do Serializer
-        # Parser retorna: 'tipo' (R/D), 'valor', 'descricao'
-        # Model espera: 'type' (IN/OUT), 'value', 'description'
-        
         tipo_banco = "IN" if parsed_data["tipo"] == "R" else "OUT"
-        
+
+        # Identifica categoria
+        categoria = None
+        if parsed_data.get("categoria_texto"):
+            categoria = Category.objects.filter(name__iexact=parsed_data["categoria_texto"]).first()
+        if not categoria:
+            # Se categoria não veio na mensagem ou não foi encontrada, tenta identificar automaticamente
+            categoria = identificar_categoria(parsed_data["descricao"])
+        if not categoria:
+            # Fallback: sempre ter uma categoria "Outros"
+            categoria = Category.objects.filter(name="Outros").first()
+
         transaction_data = {
             "description": parsed_data["descricao"],
             "value": parsed_data["valor"],
             "type": tipo_banco,
             "date_transaction": timezone.now(),
-            "category": None # Por enquanto deixamos null
+            "category": categoria.id if categoria else None  # passa ID ou None
         }
 
         # 4. SALVAMENTO: Usa o Serializer para validar e salvar
         serializer = TransacaoSerializer(data=transaction_data)
-        
+
         if serializer.is_valid():
             # Gambiarra Técnica para Testes: Pega o primeiro usuário do banco
             # TODO: Em produção, buscar o usuário pelo telefone vindo no JSON
@@ -65,27 +77,30 @@ class WebhookTransactionView(APIView):
 
             # 5. RESPOSTA: Monta a mensagem amigável 
             reply_message = (
-                f"Transação {parsed_data['tipo']} de R$ {parsed_data['valor']:.2f} "
-                f"salva com sucesso! 💰"
+                f"Transação {parsed_data['tipo']} de R$ {parsed_data['valor']:.2f}"
             )
-            
+            if categoria:
+                reply_message += f" salva em {categoria.name} 🚗"
+            else:
+                reply_message += " salva com sucesso!"
+
             return Response({
                 "success": True,
                 "reply": reply_message,
                 "debug_data": serializer.data
             }, status=status.HTTP_201_CREATED)
-        
+
         # Se o serializer falhar (ex: valor negativo estranho, etc)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 # atualização da sprint 2 do backend
 class TransactionCreateView(generics.CreateAPIView):
-    queryset = Transaction.objects.all()
-    serializer_class = TransactionSerializer
+    queryset = Transacao.objects.all()
+    serializer_class = TransacaoSerializer
 
     def perform_create(self, serializer):
-        descricao = self.request.data.get("descricao", "")
+        descricao = self.request.data.get("description", "")  # corrigido para o campo correto do serializer
         categoria = identificar_categoria(descricao)
 
-        serializer.save(categoria=categoria)
+        serializer.save(category=categoria)
