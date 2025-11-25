@@ -14,7 +14,7 @@ MAPEAMENTO = {
         "uber", "99", "taxi", "onibus", "gasolina", "posto", "estacionamento"
     ],
     "Casa": [
-        "luz", "agua", "internet", "gas", "condominio", "claro", "vivo", "net"
+        "luz", "agua", "internet", "gas", "condominio", "claro", "vivo", "net", "aluguel"
     ],
     "Saúde": [
         "farmacia", "remedio", "medico", "consulta", "exame"

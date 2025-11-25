@@ -3,11 +3,15 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from .models import Transacao, Category  # CORRIGIDO AQUI
+from .models import Transacao, Category  
 from .serializers import TransacaoSerializer
 from .parser import parse_message 
 from rest_framework import generics
 from .services import identificar_categoria
+
+
+# Aqui controlamos a API REST, se alguém mandar um POST via Postman ou Frontend por exemplo, cai aqui
+
 
 User = get_user_model()
 
@@ -34,7 +38,7 @@ class WebhookTransactionView(APIView):
         if not parsed_data:
             # Se não entendeu, retorna 200 com msg de ajuda (padrão de chatbot para não ficar tentando reenvio)
             return Response({
-                "reply": "Desculpe, não entendi. Tente algo como: '+15.50 almoço comida' ou '-50 gasolina transporte'."
+                "reply": "Desculpe, não entendi. Tente algo como: '+15.50 almoço alimentação' ou '-50 gasolina transporte'."
             }, status=status.HTTP_200_OK)
 
         # 3. ADAPTER: Converte o formato do Parser para o formato do Serializer
@@ -42,8 +46,8 @@ class WebhookTransactionView(APIView):
 
         # Identifica categoria
         categoria = None
-        if parsed_data.get("categoria"):
-            categoria = Category.objects.filter(name__iexact=parsed_data["categoria"]).first()
+        if parsed_data.get("categoria_texto"):
+            categoria = Category.objects.filter(name__iexact=parsed_data["categoria_texto"]).first()
         if not categoria:
             # Se categoria não veio na mensagem ou não foi encontrada, tenta identificar automaticamente
             categoria = identificar_categoria(parsed_data["descricao"])
