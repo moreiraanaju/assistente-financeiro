@@ -1,0 +1,62 @@
+
+-- # SPRINT 3 - CONSULTAS SQL VALIDADAS PARA O BACKEND
+-- # Tabela: public.transactions_transacao
+-- # Filtro de Teste: user_id = 1
+
+
+-- 1. SALDO TOTAL (Receitas IN - Despesas OUT)
+-- Objetivo: Retornar o saldo atual do usuário (independente do mês)
+SELECT
+    SUM(CASE WHEN type = 'IN' THEN value ELSE 0 END) -
+    SUM(CASE WHEN type = 'OUT' THEN value ELSE 0 END) AS saldo_atual
+FROM
+    public.transactions_transacao
+WHERE
+    user_id = 1;
+
+-- ---------------------------------------------
+
+-- 2. TOTAL DE RECEITAS NO MÊS ATUAL
+-- Objetivo: Retornar a soma de todas as entradas (IN) no mês e ano atuais.
+SELECT
+    SUM(value) AS total_receitas_mes
+FROM
+    public.transactions_transacao
+WHERE
+    type = 'IN'
+    AND EXTRACT(MONTH FROM date_transaction) = EXTRACT(MONTH FROM NOW())
+    AND EXTRACT(YEAR FROM date_transaction) = EXTRACT(YEAR FROM NOW())
+    AND user_id = 1;
+
+-- ---------------------------------------------
+
+-- 3. TOTAL DE DESPESAS NO MÊS ATUAL
+-- Objetivo: Retornar a soma de todas as saídas (OUT) no mês e ano atuais.
+SELECT
+    SUM(value) AS total_despesas_mes
+FROM
+    public.transactions_transacao
+WHERE
+    type = 'OUT'
+    AND EXTRACT(MONTH FROM date_transaction) = EXTRACT(MONTH FROM NOW())
+    AND EXTRACT(YEAR FROM date_transaction) = EXTRACT(YEAR FROM NOW())
+    AND user_id = 1;
+
+-- ---------------------------------------------
+
+-- 4. GASTOS POR CATEGORIA/DESCRIÇÃO NO MÊS ATUAL
+-- Objetivo: Retornar a lista de despesas agrupadas (para a mensagem formatada)
+SELECT
+    description,
+    SUM(value) AS gasto_total
+FROM
+    public.transactions_transacao
+WHERE
+    type = 'OUT'
+    AND EXTRACT(MONTH FROM date_transaction) = EXTRACT(MONTH FROM NOW())
+    AND EXTRACT(YEAR FROM date_transaction) = EXTRACT(YEAR FROM NOW())
+    AND user_id = 1
+GROUP BY
+    description
+ORDER BY
+    gasto_total DESC;
