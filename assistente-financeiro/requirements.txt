@@ -1,0 +1,18 @@
+# Esse arquivo diz quais pacotes o python precisa instalar dentro do container
+
+# Framework principal
+Django>=5.0
+
+# opcional, usado em deploys (dá p usar apenas runserver durante dev)
+gunicorn
+
+# O driver que permite o Django conectar no PostgreSQL
+psycopg[binary]>=3.1
+
+
+dj-database-url 
+
+# É uma biblioteca que permite ao Django servir arquivos estaticos diretamente do container
+whitenoise
+
+python-dotenv
