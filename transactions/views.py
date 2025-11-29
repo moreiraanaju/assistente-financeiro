@@ -3,11 +3,13 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.db import connection
 from .models import Transacao, Category  
 from .serializers import TransacaoSerializer
 from .parser import parse_message 
 from rest_framework import generics
 from .services import identificar_categoria
+
 
 
 # Aqui controlamos a API REST, se alguém mandar um POST via Postman ou Frontend por exemplo, cai aqui
@@ -94,7 +96,7 @@ class WebhookTransactionView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-# atualização da sprint 2 do backend
+
 class TransactionCreateView(generics.CreateAPIView):
     queryset = Transacao.objects.all()
     serializer_class = TransacaoSerializer
@@ -104,3 +106,97 @@ class TransactionCreateView(generics.CreateAPIView):
         categoria = identificar_categoria(descricao)
 
         serializer.save(category=categoria)
+
+
+class ConsultaView(APIView):
+    """
+    Endpoint para consultar saldo e gastos.
+    Usa queries SQL cruas (Raw SQL) definidas pela equipe de Banco.
+    """
+
+    # 1. Definindo as queries como constantes da classe (Organização)
+    SQL_SALDO = """
+        SELECT
+            SUM(CASE WHEN type = 'IN' THEN value ELSE 0 END) -
+            SUM(CASE WHEN type = 'OUT' THEN value ELSE 0 END) AS saldo_atual
+        FROM public.transactions_transacao
+        WHERE user_id = %s;
+    """
+
+    SQL_RECEITAS = """
+        SELECT SUM(value) AS total_receitas_mes
+        FROM public.transactions_transacao
+        WHERE type = 'IN'
+          AND EXTRACT(MONTH FROM date_transaction) = EXTRACT(MONTH FROM NOW())
+          AND EXTRACT(YEAR FROM date_transaction) = EXTRACT(YEAR FROM NOW())
+          AND user_id = %s;
+    """
+
+    SQL_DESPESAS = """
+        SELECT SUM(value) AS total_despesas_mes
+        FROM public.transactions_transacao
+        WHERE type = 'OUT'
+          AND EXTRACT(MONTH FROM date_transaction) = EXTRACT(MONTH FROM NOW())
+          AND EXTRACT(YEAR FROM date_transaction) = EXTRACT(YEAR FROM NOW())
+          AND user_id = %s;
+    """
+
+    SQL_CATEGORIAS = """
+        SELECT description, SUM(value) AS gasto_total
+        FROM public.transactions_transacao
+        WHERE type = 'OUT'
+          AND EXTRACT(MONTH FROM date_transaction) = EXTRACT(MONTH FROM NOW())
+          AND EXTRACT(YEAR FROM date_transaction) = EXTRACT(YEAR FROM NOW())
+          AND user_id = %s
+        GROUP BY description
+        ORDER BY gasto_total DESC;
+    """
+
+    def get(self, request):
+        tipo = request.query_params.get("tipo") 
+        
+        # TODO: Em produção, pegar o ID do request.user.id. 
+        # Por enquanto, mantendo fixo como nas queries originais, mas passando via código.
+        user_id = 1
+
+        if not tipo:
+             return Response({"error": "Parâmetro 'tipo' é obrigatório"}, status=status.HTTP_400_BAD_REQUEST)
+
+        tipo = tipo.lower()
+        query = ""
+        is_list_result = False # Flag para saber se esperamos uma lista ou um valor único
+
+        # Seleção da query
+        if tipo == "saldo":
+            query = self.SQL_SALDO
+        elif tipo == "despesas":
+            query = self.SQL_DESPESAS
+        elif tipo == "receitas":
+            query = self.SQL_RECEITAS
+        elif tipo == "categorias":
+            query = self.SQL_CATEGORIAS
+            is_list_result = True
+        else:
+            return Response({"error": "Tipo inválido"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Execução
+        try:
+            with connection.cursor() as cursor:
+                # O [user_id] substitui o %s na query de forma segura
+                cursor.execute(query, [user_id])
+                
+                if is_list_result:
+                    # Para categorias, pegamos todas as linhas
+                    rows = cursor.fetchall()
+                    # Transforma a lista de tuplas em lista de dicionários
+                    resultado = [{"categoria": row[0], "valor": float(row[1])} for row in rows]
+                    return Response({"tipo": tipo, "dados": resultado})
+                else:
+                    # Para saldo/receitas/despesas, pegamos só um valor
+                    row = cursor.fetchone()
+                    valor = row[0] if row and row[0] is not None else 0.0
+                    return Response({"tipo": tipo, "valor": float(valor)})
+
+        except Exception as e:
+            # Logar o erro se necessário
+            return Response({"error": "Erro ao processar consulta", "detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
