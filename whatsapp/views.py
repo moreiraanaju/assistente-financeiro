@@ -2,6 +2,7 @@ import json
 import logging
 import requests
 import os
+import re
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth import get_user_model
@@ -111,6 +112,58 @@ def evolution_webhook(request):
     if not text:
         print(">>> ⚠️ Falha: Texto veio vazio ou None.")
         return JsonResponse({"reply": "Nenhuma mensagem válida recebida."})
+
+    # Detecção de comandos de consulta
+    text_lower = text.lower() # Facilita o Regex
+    tipo_consulta = None
+
+    # 1. Regex para SALDO
+    if re.search(r'\b(saldo|quanto tenho|quanto sobrou)\b', text_lower):
+        tipo_consulta = "saldo"
+
+    # 2. Regex para GASTOS DE HOJE
+    elif re.search(r'\b(hoje)\b', text_lower) and re.search(r'\b(gastei|gastos|total)\b', text_lower):
+        tipo_consulta = "hoje"
+
+    # 3. Regex para GASTOS DO MÊS
+    elif re.search(r'\b(m[êe]s)\b', text_lower) and re.search(r'\b(gastei|gastos|total)\b', text_lower):
+        tipo_consulta = "mes"
+
+    # 4. Regex para GASTOS POR CATEGORIA
+    elif re.search(r'\b(categoria|onde gastei)\b', text_lower):
+        tipo_consulta = "categorias"
+
+    # SE FOI IDENTIFICADA UMA CONSULTA, BUSCA NO ENDPOINT E RESPONDE
+    if tipo_consulta:
+        print(f">>>🔍 [CONSULTA] Tipo identificado: {tipo_consulta}")
+        try:
+            # Chama o enpoint /consulta criado no Transactions App
+            base_url = os.environ.get("API_BASE_URL", "http://127.0.0.1:8000")
+            url_api = f"{base_url}/api/consulta/?tipo={tipo_consulta}"
+            
+            response = requests.get(url_api, timeout=5)
+            dados = response.json()
+
+            if response.status_code == 200:
+                # FEEDBACK
+                # Por enquanto, fazemos uma formatação básica para não quebrar
+                if tipo_consulta == "categorias":
+                    lista_gastos = dados.get("dados", [])
+                    msg_items = [f"▫️ {item['categoria']}: R$ {item['valor']:.2f}" for item in lista_gastos]
+                    reply_text = "📊 *Gastos por Categoria:*\n" + "\n".join(msg_items)
+                else:
+                    valor = dados.get("valor", 0.0)
+                    reply_text = f"💰 *Consulta {tipo_consulta.title()}:* R$ {valor:.2f}"
+            else:
+                reply_text = f"⚠️ Erro ao consultar: {dados.get('error')}"
+
+        except Exception as e:
+            print(f">>> ❌ [ERRO API] {e}")
+            reply_text = "Desculpe, não consegui acessar seus dados agora."
+
+        # Envia a resposta e ENCERRA a função (return) para não tentar salvar como transação
+        send_evolution_message(number, reply_text)
+        return HttpResponse("OK")
 
     # 4. Lógica de Negócio
     parsed_data = parse_message(text)
