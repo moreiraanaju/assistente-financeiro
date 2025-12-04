@@ -30,15 +30,19 @@ def parse_message(text):
     numero_str = match.group(1)
     valor = float(numero_str)
 
+
     # Ajuste de tipo com base no sinal
+
+    # 1. Se tem sinal explícito, respeita o sinal
     if numero_str.startswith("-"):
-        valor = abs(valor)
         tipo = "D"
+        valor = abs(valor)
     elif numero_str.startswith("+"):
         tipo = "R"
-
+        
+    # 2. Se não tem sinal e não achou palavras-chave (gastei/recebi)
     if not tipo:
-        tipo = "R" if valor > 0 else "D"
+        tipo = "D"
 
     # Remove só o número e mantém o resto
     texto_sem_numero = (original[:match.start()] + original[match.end():]).strip()

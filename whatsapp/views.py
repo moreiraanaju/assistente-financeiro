@@ -9,12 +9,8 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from transactions.models import Category 
 from transactions.services import identificar_categoria
-
 from transactions.parser import parse_message
 from transactions.serializers import TransacaoSerializer
-
-
-# Aqui controlamos o Webhook que recebe a mensagem da Evolution API
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -28,39 +24,16 @@ EVOLUTION_BOT_KEY = os.environ.get("EVOLUTION_BOT_KEY")
 def send_evolution_message(number, text):
     """Envia mensagem ativa para a Evolution API"""
     if not text: return
-
     base = (EVOLUTION_API_BASE or "").strip().rstrip('/')
     instance = (EVOLUTION_INSTANCE_NAME or "").strip()
     token = (EVOLUTION_API_TOKEN or "").strip()
-
     url = f"{base}/message/sendText/{instance}"
-    
-    headers = {
-        "apikey": token,
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "number": number,
-        "text": text,  
-        "delay": 1200,
-        "linkPreview": False
-    }
-    
-    print(f"\n>>> 📤 [ENVIO] Tentando enviar para: {number}")
-    
+    headers = {"apikey": token, "Content-Type": "application/json"}
+    payload = {"number": number, "text": text, "delay": 1200, "linkPreview": False}
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        print(f">>> 📡 [ENVIO] Status Evolution: {response.status_code}")
-        
-        # Se der erro, mostra o porquê
-        if response.status_code != 200 and response.status_code != 201:
-            print(f">>> 📄 [ENVIO] Erro: {response.text}\n")
-        else:
-            print(f">>> 🚀 [SUCESSO] Mensagem entregue!\n")
-
+        requests.post(url, json=payload, headers=headers, timeout=10)
     except Exception as e:
-        print(f">>> ❌ [ENVIO] Erro Crítico: {e}")
+        print(f">>> ❌ [ENVIO] Erro: {e}")
 
 @csrf_exempt
 def evolution_webhook(request):
@@ -68,7 +41,6 @@ def evolution_webhook(request):
     api_key_received = request.headers.get("apikey") or request.GET.get("apikey")
     if EVOLUTION_BOT_KEY and api_key_received != EVOLUTION_BOT_KEY:
         return HttpResponse("Unauthorized", status=401)
-
     if request.method != "POST":
         return HttpResponse("Method Not Allowed", status=405)
 
@@ -77,117 +49,127 @@ def evolution_webhook(request):
     except json.JSONDecodeError:
         return HttpResponse("Invalid JSON", status=400)
 
-    # 2. Debug da Estrutura 
-    print("\n>>> 📦 [RECEBIDO] JSON Bruto (Resumido):")
-    # Imprime só as chaves pra gente entender a estrutura sem poluir demais
-    print(payload.keys()) 
-
-    # 3. Extração
+    # 2. Extração
     data = payload.get("data", {})
-    
-    # Proteção contra mensagens do próprio bot (Loop Infinito)
     if data.get("key", {}).get("fromMe") == True:
-        print(">>> 🛑 Mensagem ignorada (enviada por mim mesmo).")
         return HttpResponse("OK")
 
-    # Extrai Telefone
     remote_jid = data.get("key", {}).get("remoteJid") or data.get("remoteJid")
     if not remote_jid:
-        print(">>> ⚠️ Ignorado: Sem RemoteJid")
         return JsonResponse({"status": "ignored", "reason": "no_jid"})
         
     number = remote_jid.split("@")[0]
-
-    # Extrai Texto (Tenta os 3 lugares mais comuns)
     msg_obj = data.get("message", {})
-    
-    text = msg_obj.get("conversation") # Texto puro
-    if not text:
-        text = msg_obj.get("extendedTextMessage", {}).get("text") # Texto com preview
-    if not text:
-        text = data.get("body") # Legado
-        
-    print(f">>> 🕵️ [EXTRAÇÃO] Número: {number} | Texto Encontrado: '{text}'")
+    text = msg_obj.get("conversation") or msg_obj.get("extendedTextMessage", {}).get("text") or data.get("body")
 
     if not text:
-        print(">>> ⚠️ Falha: Texto veio vazio ou None.")
         return JsonResponse({"reply": "Nenhuma mensagem válida recebida."})
 
-    # Detecção de comandos de consulta
-    text_lower = text.lower() # Facilita o Regex
+    print(f">>> 🕵️ [EXTRAÇÃO] Texto: '{text}'")
+
+    # =========================================================================
+    # DETECÇÃO DE INTENÇÃO (CONSULTAS)
+    # =========================================================================
+    text_lower = text.lower()
     tipo_consulta = None
+    extra_params = ""
 
-    # 1. Regex para SALDO
-    if re.search(r'\b(saldo|quanto tenho|quanto sobrou)\b', text_lower):
-        tipo_consulta = "saldo"
+    # Tenta identificar filtro combinado PRIMEIRO
+    match_combinado = re.search(r'(?:gastei|gastos)\s+(?:com|em|no|na)?\s*(\w+) .*?(semana|m[êe]s)', text_lower)
 
-    # 2. Regex para GASTOS DE HOJE
-    elif re.search(r'\b(hoje)\b', text_lower) and re.search(r'\b(gastei|gastos|total)\b', text_lower):
+    if match_combinado:
+        categoria_detectada = match_combinado.group(1) 
+        periodo_detectado = match_combinado.group(2)   
+        
+        tipo_consulta = "filtro_combinado"
+        extra_params = f"&periodo={periodo_detectado}&categoria={categoria_detectada}"
+
+
+
+    # ATENÇÃO: Use ELIF aqui para não sobrescrever o filtro combinado!
+
+    elif re.search(r'\b(semana|semanal)\b', text_lower) and re.search(r'\b(ganhei|recebi|receitas|entradas)\b', text_lower):
+        tipo_consulta = "receitas_semana"
+
+    elif re.search(r'\b(hoje|do dia)\b', text_lower) and re.search(r'\b(gastei|gastos|total|despesa|saidas)\b', text_lower):
         tipo_consulta = "hoje"
 
-    # 3. Regex para GASTOS DO MÊS
-    elif re.search(r'\b(m[êe]s)\b', text_lower) and re.search(r'\b(gastei|gastos|total)\b', text_lower):
-        tipo_consulta = "mes"
+    elif re.search(r'\b(semana|semanal)\b', text_lower) and re.search(r'\b(gastei|gastos|total|despesa)\b', text_lower):
+        tipo_consulta = "semana"
 
-    # 4. Regex para GASTOS POR CATEGORIA
+    elif re.search(r'\b(m[êe]s|mensal)\b', text_lower) and re.search(r'\b(gastei|gastos|total|fatura)\b', text_lower):
+        tipo_consulta = "despesas"
+
     elif re.search(r'\b(categoria|onde gastei)\b', text_lower):
         tipo_consulta = "categorias"
 
-    # SE FOI IDENTIFICADA UMA CONSULTA, BUSCA NO ENDPOINT E RESPONDE
+    elif re.search(r'\b(saldo|quanto tenho|quanto sobrou)\b', text_lower):
+        tipo_consulta = "saldo"
+
+    elif re.search(r'\b(ganhei|recebi|receitas|entradas)\b', text_lower):
+        tipo_consulta = "receitas"
+
+    # --- EXECUÇÃO DA CONSULTA ---
     if tipo_consulta:
-        print(f">>>🔍 [CONSULTA] Tipo identificado: {tipo_consulta}")
+        print(f">>>🔍 [CONSULTA] Tipo: {tipo_consulta} | Params: {extra_params}")
         try:
-            # Chama o enpoint /consulta criado no Transactions App
             base_url = os.environ.get("API_BASE_URL", "http://127.0.0.1:8000")
-            url_api = f"{base_url}/api/consulta/?tipo={tipo_consulta}"
+            url_api = f"{base_url}/api/consulta/?tipo={tipo_consulta}{extra_params}"
             
             response = requests.get(url_api, timeout=5)
             dados = response.json()
 
             if response.status_code == 200:
-                # FEEDBACK
-                # Por enquanto, fazemos uma formatação básica para não quebrar
-                if tipo_consulta == "categorias":
-                    lista_gastos = dados.get("dados", [])
-                    msg_items = [f"▫️ {item['categoria']}: R$ {item['valor']:.2f}" for item in lista_gastos]
-                    reply_text = "📊 *Gastos por Categoria:*\n" + "\n".join(msg_items)
+                if tipo_consulta == "filtro_combinado":
+                    valor = dados.get("valor", 0.0)
+                    cat_nome = dados.get("categoria", "essa categoria").capitalize()
+                    periodo_txt = "nesta semana" if "semana" in extra_params else "neste mês"
+                    reply_text = f"🔎 Gastos com *{cat_nome}* {periodo_txt}: R$ {valor:.2f}"
+                
+                elif tipo_consulta == "categorias":
+                    lista = dados.get("dados", [])
+                    if not lista: reply_text = "🤷‍♂️ Sem gastos por categoria no período."
+                    else:
+                        items = [f"▫️ {i['categoria']}: R$ {i['valor']:.2f}" for i in lista]
+                        reply_text = "📊 *Gastos por Categoria:*\n" + "\n".join(items)
                 else:
                     valor = dados.get("valor", 0.0)
-                    reply_text = f"💰 *Consulta {tipo_consulta.title()}:* R$ {valor:.2f}"
+                    titulos = {
+                        "saldo": "💰 *Saldo Atual:*",
+                        "hoje": "📅 *Hoje:*",
+                        "semana": "🗓️ *Semana:*",
+                        "despesas": "📉 *Mês:*",
+                        "receitas": "📈 *Receitas:*",
+                        "receitas_semana": "🤑 *Receitas (Semana):*"
+                    }
+                    reply_text = f"{titulos.get(tipo_consulta, 'Consulta:')} R$ {valor:.2f}"
             else:
-                reply_text = f"⚠️ Erro ao consultar: {dados.get('error')}"
+                reply_text = f"⚠️ Erro na API: {dados.get('error')}"
 
         except Exception as e:
-            print(f">>> ❌ [ERRO API] {e}")
-            reply_text = "Desculpe, não consegui acessar seus dados agora."
+            print(f">>> ❌ Erro: {e}")
+            reply_text = "Erro ao consultar dados."
 
-        # Envia a resposta e ENCERRA a função (return) para não tentar salvar como transação
         send_evolution_message(number, reply_text)
         return HttpResponse("OK")
 
-    # 4. Lógica de Negócio
+    # =========================================================================
+    # LÓGICA DE CADASTRO (CRIAR TRANSAÇÃO)
+    # =========================================================================
+    
     parsed_data = parse_message(text)
     reply_text = ""
 
     if parsed_data:
         print(f">>> 💰 [PARSER] Entendido: {parsed_data}")
 
-        # --- LÓGICA DE CATEGORIA (NOVA) ---
         categoria = None
-        
-        # 1. Tenta pegar a categoria explicita na mensagem (ex: "transporte")
-        nome_categoria_msg = parsed_data.get("categoria_texto")
-        if nome_categoria_msg:
-            categoria = Category.objects.filter(name__iexact=nome_categoria_msg).first()
-        
-        # 2. Se não achou, tenta identificar automaticamente pela descrição
+        if parsed_data.get("categoria_texto"):
+            categoria = Category.objects.filter(name__iexact=parsed_data["categoria_texto"]).first()
         if not categoria:
             categoria = identificar_categoria(parsed_data["descricao"])
-
-        # 3. Fallback: Se ainda assim for None, tenta "Outros"
         if not categoria:
             categoria = Category.objects.filter(name="Outros").first()
-        # ----------------------------------
 
         tipo_banco = "IN" if parsed_data["tipo"] == "R" else "OUT"
         
@@ -196,34 +178,28 @@ def evolution_webhook(request):
             "value": parsed_data["valor"],
             "type": tipo_banco,
             "date_transaction": timezone.now(),
-            "category": categoria.id if categoria else None # Passa o ID se existir
+            "category": categoria.id if categoria else None
         }
 
         serializer = TransacaoSerializer(data=transaction_data)
         
         if serializer.is_valid():
-            user = User.objects.first() # TODO: Pegar user pelo telefone no futuro
+            user = User.objects.first()
             if user:
                 serializer.save(user=user)
-                
-                # --- RESPOSTA DINÂMICA (NOVA) ---
-                if categoria and categoria.name != "Outros":
-                    reply_text = f"✅ Salvo em *{categoria.name}*! \nValor: R$ {parsed_data['valor']:.2f}"
-                else:
-                    reply_text = f"⚠️ Categoria não identificada. \n✅ Salvo em *Outros*: R$ {parsed_data['valor']:.2f}"
-                # --------------------------------
-                
-                print(">>> ✅ [BANCO] Salvo com sucesso!")
+                cat_nome = categoria.name if categoria else "Outros"
+                reply_text = f"✅ Salvo em *{cat_nome}*! \nValor: R$ {parsed_data['valor']:.2f}"
             else:
-                reply_text = "Erro: Sem usuário cadastrado no sistema."
+                reply_text = "Erro: Sem usuário cadastrado."
         else:
             reply_text = "Erro ao salvar. Verifique o formato."
             print(f">>> ❌ [SERIALIZER] Erros: {serializer.errors}")
     else:
-        reply_text = "Não entendi. Tente exemplo: '15.00 almoço'."
-        print(">>> ❓ [PARSER] Não entendeu o padrão.")
+        # Não entendeu nada (nem consulta, nem transação)
+        # return HttpResponse("OK") silencioso ou mande msg de ajuda
+        pass
 
-    # 5. Envio da Resposta
-    send_evolution_message(number, reply_text)
+    if reply_text:
+        send_evolution_message(number, reply_text)
 
     return HttpResponse("OK")
