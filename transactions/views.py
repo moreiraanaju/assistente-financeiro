@@ -6,7 +6,7 @@ from django.utils import timezone
 from django.db import connection
 from .models import Transacao, Category  
 from .serializers import TransacaoSerializer
-from .parser import parse_message 
+from .nlp_parser import interpret_message as parse_message
 from rest_framework import generics
 from .services import identificar_categoria
 from .services import identificar_categoria, resolver_nome_categoria

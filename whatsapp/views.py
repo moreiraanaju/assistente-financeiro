@@ -9,7 +9,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from transactions.models import Category 
 from transactions.services import identificar_categoria
-from transactions.parser import parse_message
+from transactions.nlp_parser import interpret_message as parse_message
 from transactions.serializers import TransacaoSerializer
 
 logger = logging.getLogger(__name__)
