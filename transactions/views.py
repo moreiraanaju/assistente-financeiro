@@ -38,6 +38,43 @@ class WebhookTransactionView(APIView):
                 "reply": "Desculpe, não entendi. Tente algo como: '+15.50 almoço alimentação' ou '-50 gasolina transporte'."
             }, status=status.HTTP_200_OK)
 
+        # 2a. CORREÇÃO — substitui a última transação pelo valor corrigido
+        if parsed_data.get("is_correcao"):
+            usuario_padrao = User.objects.first()
+            if not usuario_padrao:
+                return Response({"error": "Nenhum usuário no banco."}, status=500)
+            ultima = Transacao.objects.filter(user=usuario_padrao).first()
+            if not ultima:
+                return Response({
+                    "reply": "Não há transação anterior para corrigir.",
+                    "is_correcao": True,
+                }, status=status.HTTP_200_OK)
+            novo_valor = parsed_data["valor"]
+            nova = Transacao(
+                user=ultima.user,
+                value=novo_valor,
+                type=ultima.type,
+                description=ultima.description,
+                category=ultima.category,
+                date_transaction=ultima.date_transaction,
+            )
+            ultima.delete()
+            nova.save()
+            return Response({
+                "success": True,
+                "reply": f"Corrigi a última transação para R$ {novo_valor:.2f} ✅",
+                "is_correcao": True,
+            }, status=status.HTTP_200_OK)
+
+        # 2b. AMBIGUIDADE — pede clarificação em vez de salvar
+        if parsed_data.get("ambiguo"):
+            motivo = parsed_data.get("motivo_ambiguidade") or "não entendi completamente"
+            return Response({
+                "reply": f"Não entendi bem: {motivo}. Tente algo como 'gastei 50 no mercado'.",
+                "ambiguo": True,
+                "confianca": parsed_data.get("confianca"),
+            }, status=status.HTTP_200_OK)
+
         # 3. ADAPTER
         tipo_banco = "IN" if parsed_data["tipo"] == "R" else "OUT"
 
