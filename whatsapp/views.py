@@ -16,19 +16,19 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 # Configs
-EVOLUTION_API_BASE = os.environ.get("EVOLUTION_API_BASE")
-EVOLUTION_INSTANCE_NAME = os.environ.get("EVOLUTION_INSTANCE_NAME")
-EVOLUTION_API_TOKEN = os.environ.get("EVOLUTION_API_TOKEN")
+UAZAPI_URL = os.environ.get("UAZAPI_URL")
+UAZAPI_TOKEN = os.environ.get("UAZAPI_TOKEN")
+UAZAPI_INSTANCE_NAME = os.environ.get("UAZAPI_INSTANCE_NAME")
 EVOLUTION_BOT_KEY = os.environ.get("EVOLUTION_BOT_KEY")
 
 def send_evolution_message(number, text):
-    """Envia mensagem ativa para a Evolution API"""
+    """Envia mensagem ativa para a Uazapi"""
     if not text: return
-    base = (EVOLUTION_API_BASE or "").strip().rstrip('/')
-    instance = (EVOLUTION_INSTANCE_NAME or "").strip()
-    token = (EVOLUTION_API_TOKEN or "").strip()
+    base = (UAZAPI_URL or "").strip().rstrip('/')
+    instance = (UAZAPI_INSTANCE_NAME or "").strip()
+    token = (UAZAPI_TOKEN or "").strip()
     url = f"{base}/message/sendText/{instance}"
-    headers = {"apikey": token, "Content-Type": "application/json"}
+    headers = {"token": token, "Content-Type": "application/json"}
     payload = {"number": number, "text": text, "delay": 1200, "linkPreview": False}
     try:
         requests.post(url, json=payload, headers=headers, timeout=10)
@@ -51,16 +51,18 @@ def evolution_webhook(request):
 
     # 2. Extração
     data = payload.get("data", {})
-    if data.get("key", {}).get("fromMe") == True:
+
+    # Ignora mensagens enviadas pelo próprio bot
+    if data.get("fromMe") == True:
         return HttpResponse("OK")
 
-    remote_jid = data.get("key", {}).get("remoteJid") or data.get("remoteJid")
-    if not remote_jid:
-        return JsonResponse({"status": "ignored", "reason": "no_jid"})
-        
-    number = remote_jid.split("@")[0]
-    msg_obj = data.get("message", {})
-    text = msg_obj.get("conversation") or msg_obj.get("extendedTextMessage", {}).get("text") or data.get("body")
+    # Uazapi envia número diretamente em data.from
+    number = data.get("from")
+    if not number:
+        return JsonResponse({"status": "ignored", "reason": "no_number"})
+
+    # Uazapi envia texto em data.body
+    text = data.get("body") or data.get("text")
 
     if not text:
         return JsonResponse({"reply": "Nenhuma mensagem válida recebida."})
