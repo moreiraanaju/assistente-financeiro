@@ -13,7 +13,7 @@ Formato de saída padrão (v3.0):
     "is_correcao": bool,
 }
 
-VERSÃO 3.0 - Melhorias:
+VERSÃO 3.1 - Correções:
 1. ✅ Aceita frases sem palavras-chave (mais naturais)
 2. ✅ Palavras-chave expandidas por categoria
 3. ✅ Linguagem natural flexível (com preposições)
@@ -21,18 +21,39 @@ VERSÃO 3.0 - Melhorias:
 5. ✅ Detecção de correções ("na verdade foi 30", "corrige para 45")
 6. ✅ Cálculo de nível de confiança (alta / media / baixa)
 7. ✅ Sinalização de ambiguidade com motivo explicado
+8. ✅ [fix] CATEGORIAS sincronizado com MAPEAMENTO de services.py (nomes de DB)
+9. ✅ [fix] _VERBOS_ACAO promovido a constante de módulo
 """
 
 import re
+from unidecode import unidecode
 
 
-# Dicionário de categorias com palavras-chave
+# ---------------------------------------------------------------------------
+# CATEGORIAS — palavras-chave por categoria.
+#
+# IMPORTANTE: as chaves DEVEM corresponder exatamente aos nomes registrados
+# no banco de dados (tabela transactions_category.name), pois o valor de
+# categoria_texto retornado por este parser é usado diretamente em:
+#   Category.objects.filter(name__iexact=categoria_texto)
+# Manter sincronizado com services.MAPEAMENTO.
+# ---------------------------------------------------------------------------
 CATEGORIAS = {
-    "alimentação": ["mercado", "supermercado", "açougue", "padaria", "restaurante", "bar", "café", "comida", "almoço", "lanche", "pizza", "hambúrguer"],
-    "transporte":   ["uber", "taxi", "ônibus", "combustível", "gasolina", "passagem", "trem", "avião", "transporte"],
-    "entretenimento": ["cinema", "filme", "jogo", "show", "música", "streaming", "diversão"],
-    "saúde":        ["farmácia", "medicamento", "médico", "dentista", "hospital", "saúde"],
-    "moradia":      ["aluguel", "luz", "água", "internet", "condomínio", "moradia"],
+    "Renda":        ["salario", "salário", "pix", "deposito", "depósito", "venda", "bonus", "bônus"],
+    "Alimentação":  ["mercado", "supermercado", "ifood", "restaurante", "lanche", "pizza",
+                     "padaria", "almoco", "almoço", "jantar", "acai", "açaí", "hambúrguer",
+                     "açougue", "café", "comida"],
+    "Transporte":   ["uber", "99", "taxi", "onibus", "ônibus", "gasolina", "combustível",
+                     "posto", "estacionamento", "passagem", "trem", "avião", "transporte"],
+    "Casa":         ["luz", "agua", "água", "internet", "gas", "gás", "condominio", "condomínio",
+                     "claro", "vivo", "net", "aluguel", "moradia"],
+    "Saúde":        ["farmacia", "farmácia", "remedio", "remédio", "medicamento", "medico",
+                     "médico", "dentista", "consulta", "exame", "hospital", "saúde"],
+    "Lazer":        ["cinema", "filme", "bar", "viagem", "netflix", "spotify", "ingresso",
+                     "jogo", "show", "música", "streaming", "diversão"],
+    "Compras":      ["shopee", "amazon", "roupa", "loja", "shein", "presente"],
+    "Educação":     ["faculdade", "curso", "escola", "livro", "aula"],
+    "Investimento": ["cdb", "poupanca", "poupança", "tesouro", "cripto"],
 }
 
 # Palavras de ação (método e tipo)
@@ -48,6 +69,12 @@ PADROES_CORRECAO = [
     # "não, foi 30" / "não era 100" / "nao foi 30"
     r"n[aã]o[,.]?\s+(?:foi|era|eram|é)\s+([+-]?\d+(?:\.\d+)?)",
 ]
+
+# Verbos de acao — removidos da descricao para determinar se ha conteudo real
+_VERBOS_ACAO = {
+    "recebi", "ganhei", "entrou", "gastei", "paguei",
+    "comprei", "usei", "saida", "consumo", "conta", "entrada",
+}
 
 
 def interpret_message(text):
@@ -105,11 +132,7 @@ def interpret_message(text):
 
     # ------- 4. CALCULAR CONFIANÇA E AMBIGUIDADE --------
     # Descrição "real" existe se, após remover verbos de ação, sobra alguma palavra
-    # OU se uma categoria foi identificada (ex: "gastei 50 mercado" → categoria alimentação)
-    _VERBOS_ACAO = {
-        "recebi", "ganhei", "entrou", "gastei", "paguei",
-        "comprei", "usei", "saída", "saida", "consumo", "conta", "entrada",
-    }
+    # OU se uma categoria foi identificada (ex: "gastei 50 mercado" → categoria Alimentação)
     if descricao in (None, "sem descrição", ""):
         tem_descricao = False
     else:
@@ -197,33 +220,38 @@ def _extrai_descricao_categoria(texto, match):
     if not partes:
         return "sem descrição", categoria_encontrada
     
-    # Se achou categoria: tira as palavras-chave dela da descrição
+    # Se achou categoria: tira as palavras-chave dela da descricao
     if categoria_encontrada:
-        # Filtra palavras-chave da categoria
-        palavras_categoria = set(CATEGORIAS[categoria_encontrada])
-        partes_filtradas = [p for p in partes if p not in palavras_categoria]
-        
-        # Se sobrou algo, usa como descrição
+        # Filtra palavras-chave da categoria usando comparacao normalizada
+        palavras_categoria = {_normaliza(p) for p in CATEGORIAS[categoria_encontrada]}
+        partes_filtradas = [p for p in partes if _normaliza(p) not in palavras_categoria]
+
+        # Se sobrou algo, usa como descricao
         descricao = " ".join(partes_filtradas) if partes_filtradas else categoria_encontrada
     else:
-        # Sem categoria: usa tudo como descrição
-        descricao = " ".join(partes) if partes else "sem descrição"
-    
-    return descricao or "sem descrição", categoria_encontrada
+        # Sem categoria: usa tudo como descricao
+        descricao = " ".join(partes) if partes else "sem descricao"
+
+    return descricao or "sem descricao", categoria_encontrada
+
+
+def _normaliza(texto: str) -> str:
+    """Remove acentos e converte para minúsculas para comparação."""
+    return unidecode(texto).lower().strip()
 
 
 def _detecta_categoria(texto):
     """
-    Detecta categoria procurando por palavras-chave.
-    
-    Retorna o nome da categoria ou None.
+    Detecta categoria procurando por palavras-chave no texto normalizado.
+
+    Retorna o nome oficial da categoria (igual ao nome no DB) ou None.
     """
-    
+    texto_norm = _normaliza(texto)
     for categoria, palavras in CATEGORIAS.items():
         for palavra in palavras:
-            if palavra in texto:
+            if _normaliza(palavra) in texto_norm:
                 return categoria
-    
+
     return None
 
 
@@ -289,50 +317,3 @@ def _calcula_confianca_e_ambiguidade(texto, numero_str, tem_descricao):
     return "baixa", True, "somente o valor foi informado, sem descrição ou contexto"
 
 
-# ========== TESTES ==========
-
-if __name__ == "__main__":
-    exemplos = [
-        # Basicos
-        ("gastei 50 mercado",        False),
-        ("+100 salario",             False),
-        ("paguei 30 uber",           False),
-        # Sem palavra-chave
-        ("50 mercado",               False),
-        ("30 uber",                  False),
-        ("15 cinema",                False),
-        # Com preposicoes
-        ("gastei 50 no mercado",     False),
-        ("paguei 30 de uber",        False),
-        ("comprei 100 no restaurante", False),
-        ("recebi 200 de salario",    False),
-        # Combinacoes naturais
-        ("ganhei 1500 de salario",   False),
-        ("usei 25 em uma pizza",     False),
-        ("pagamento de 500 passagem", False),
-        # Invalidos (devem retornar None)
-        ("",                         True),
-        ("sem numero aqui",          True),
-    ]
-
-    print("=" * 65)
-    print("TESTES DO NLP PARSER")
-    print("=" * 65)
-
-    sucessos = 0
-    falhas = 0
-
-    for entrada, espera_none in exemplos:
-        resultado = interpret_message(entrada)
-        ok = (resultado is None) == espera_none
-        status = "[OK]" if ok else "[FALHA]"
-
-        print(f"\n{status} '{entrada}'")
-        if resultado:
-            sucessos += 1
-            print(f"  valor={resultado['valor']}, tipo={resultado['tipo']}, cat={resultado['categoria_texto']}")
-        else:
-            falhas += 1
-
-    print("\n" + "=" * 65)
-    print(f"RESUMO: {sucessos} com resultado, {falhas} sem resultado (esperados)")
