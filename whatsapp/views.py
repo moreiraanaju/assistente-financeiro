@@ -27,9 +27,9 @@ def send_evolution_message(number, text):
     base = (UAZAPI_URL or "").strip().rstrip('/')
     instance = (UAZAPI_INSTANCE_NAME or "").strip()
     token = (UAZAPI_TOKEN or "").strip()
-    url = f"{base}/message/sendText/{instance}"
+    url = f"{base}/send/text"
     headers = {"token": token, "Content-Type": "application/json"}
-    payload = {"number": number, "text": text, "delay": 1200, "linkPreview": False}
+    payload = {"number": number, "text": text, "delay": 1200}
     try:
         requests.post(url, json=payload, headers=headers, timeout=10)
     except Exception as e:
@@ -46,23 +46,24 @@ def evolution_webhook(request):
 
     try:
         payload = json.loads(request.body)
+        print(f">>> 📦 [PAYLOAD COMPLETO] {json.dumps(payload, indent=2, ensure_ascii=False)}")
     except json.JSONDecodeError:
         return HttpResponse("Invalid JSON", status=400)
 
     # 2. Extração
-    data = payload.get("data", {})
+    message = payload.get("message", {})
 
     # Ignora mensagens enviadas pelo próprio bot
-    if data.get("fromMe") == True:
+    if message.get("fromMe") == True:
         return HttpResponse("OK")
 
-    # Uazapi envia número diretamente em data.from
-    number = data.get("from")
+    # Uazapi envia número em message.chatid
+    number = message.get("chatid", "").replace("@s.whatsapp.net", "")
     if not number:
         return JsonResponse({"status": "ignored", "reason": "no_number"})
 
-    # Uazapi envia texto em data.body
-    text = data.get("body") or data.get("text")
+    # Uazapi envia texto em message.text
+    text = message.get("text") or message.get("content")
 
     if not text:
         return JsonResponse({"reply": "Nenhuma mensagem válida recebida."})
