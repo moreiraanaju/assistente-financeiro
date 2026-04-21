@@ -84,8 +84,6 @@ def evolution_webhook(request):
         tipo_consulta = "filtro_combinado"
         extra_params = f"&periodo={periodo_detectado}&categoria={categoria_detectada}"
 
-
-
     # ATENÇÃO: Use ELIF aqui para não sobrescrever o filtro combinado!
 
     elif re.search(r'\b(semana|semanal)\b', text_lower) and re.search(r'\b(ganhei|recebi|receitas|entradas)\b', text_lower):
@@ -163,6 +161,38 @@ def evolution_webhook(request):
     if parsed_data:
         print(f">>> 💰 [PARSER] Entendido: {parsed_data}")
 
+        # RF08 — trata ambiguidade antes de tentar salvar
+        if parsed_data.get("ambiguo"):
+            motivo = parsed_data.get("motivo_ambiguidade") or "não entendi bem"
+            reply_text = f"🤔 Hmm, {motivo}. Pode tentar de novo? Ex: 'gastei 50 no mercado' ou 'recebi 1500 de salário'"
+            send_evolution_message(number, reply_text)
+            return HttpResponse("OK")
+
+        # Trata correção de transação anterior
+        if parsed_data.get("is_correcao"):
+            from transactions.models import Transacao
+            user = User.objects.first()
+            if user:
+                ultima = Transacao.objects.filter(user=user).first()
+                if ultima:
+                    nova = Transacao(
+                        user=ultima.user,
+                        value=parsed_data["valor"],
+                        type=ultima.type,
+                        description=ultima.description,
+                        category=ultima.category,
+                        date_transaction=ultima.date_transaction,
+                    )
+                    ultima.delete()
+                    nova.save()
+                    reply_text = f"✅ Corrigi para R$ {parsed_data['valor']:.2f}!"
+                else:
+                    reply_text = "Não encontrei nenhuma transação anterior para corrigir."
+            else:
+                reply_text = "Erro: Sem usuário cadastrado."
+            send_evolution_message(number, reply_text)
+            return HttpResponse("OK")
+
         categoria = None
         if parsed_data.get("categoria_texto"):
             categoria = Category.objects.filter(name__iexact=parsed_data["categoria_texto"]).first()
@@ -197,7 +227,8 @@ def evolution_webhook(request):
     else:
         # Não entendeu nada (nem consulta, nem transação)
         # return HttpResponse("OK") silencioso ou mande msg de ajuda
-        pass
+        reply_text = "Não entendi sua mensagem. Tente: 'gastei 50 no mercado' ou 'quanto gastei esse mês?'"
+        send_evolution_message(number, reply_text)
 
     if reply_text:
         send_evolution_message(number, reply_text)
