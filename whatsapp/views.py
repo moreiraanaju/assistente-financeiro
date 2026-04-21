@@ -9,7 +9,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from transactions.models import Category 
 from transactions.services import identificar_categoria
-from transactions.parser import parse_message
+from transactions.nlp_parser import interpret_message as parse_message
 from transactions.serializers import TransacaoSerializer
 
 logger = logging.getLogger(__name__)
@@ -154,14 +154,54 @@ def evolution_webhook(request):
         return HttpResponse("OK")
 
     # =========================================================================
-    # LÓGICA DE CADASTRO (CRIAR TRANSAÇÃO)
+    # LOGICA DE CADASTRO (CRIAR TRANSACAO)
     # =========================================================================
-    
+
     parsed_data = parse_message(text)
     reply_text = ""
 
     if parsed_data:
-        print(f">>> 💰 [PARSER] Entendido: {parsed_data}")
+        print(f">>> [PARSER] Entendido: {parsed_data}")
+
+        # ---- CORRECAO: substitui a ultima transacao pelo valor corrigido ----
+        if parsed_data.get("is_correcao"):
+            user = User.objects.first()
+            if not user:
+                reply_text = "Erro: Sem usuario cadastrado."
+            else:
+                from transactions.models import Transacao
+                from django.db.models.deletion import ProtectedError
+                ultima = Transacao.objects.filter(user=user).first()
+                if not ultima:
+                    reply_text = "Nao ha transacao anterior para corrigir."
+                else:
+                    novo_valor = parsed_data["valor"]
+                    nova = Transacao(
+                        user=ultima.user,
+                        value=novo_valor,
+                        type=ultima.type,
+                        description=ultima.description,
+                        category=ultima.category,
+                        date_transaction=ultima.date_transaction,
+                    )
+                    try:
+                        ultima.delete()
+                        nova.save()
+                        reply_text = f"Corrigi a ultima transacao para R$ {novo_valor:.2f}"
+                    except ProtectedError:
+                        reply_text = (
+                            "Nao foi possivel corrigir: a transacao esta vinculada "
+                            "a uma mensagem protegida. Entre em contato com o suporte."
+                        )
+            send_evolution_message(number, reply_text)
+            return HttpResponse("OK")
+
+        # ---- AMBIGUIDADE: pede clarificacao em vez de salvar ----
+        if parsed_data.get("ambiguo"):
+            motivo = parsed_data.get("motivo_ambiguidade") or "nao entendi completamente"
+            reply_text = f"Nao entendi bem: {motivo}. Tente algo como 'gastei 50 no mercado'."
+            send_evolution_message(number, reply_text)
+            return HttpResponse("OK")
 
         categoria = None
         if parsed_data.get("categoria_texto"):
@@ -172,7 +212,7 @@ def evolution_webhook(request):
             categoria = Category.objects.filter(name="Outros").first()
 
         tipo_banco = "IN" if parsed_data["tipo"] == "R" else "OUT"
-        
+
         transaction_data = {
             "description": parsed_data["descricao"],
             "value": parsed_data["valor"],
@@ -182,21 +222,20 @@ def evolution_webhook(request):
         }
 
         serializer = TransacaoSerializer(data=transaction_data)
-        
+
         if serializer.is_valid():
             user = User.objects.first()
             if user:
                 serializer.save(user=user)
                 cat_nome = categoria.name if categoria else "Outros"
-                reply_text = f"✅ Salvo em *{cat_nome}*! \nValor: R$ {parsed_data['valor']:.2f}"
+                reply_text = f"Salvo em *{cat_nome}*! \nValor: R$ {parsed_data['valor']:.2f}"
             else:
-                reply_text = "Erro: Sem usuário cadastrado."
+                reply_text = "Erro: Sem usuario cadastrado."
         else:
             reply_text = "Erro ao salvar. Verifique o formato."
-            print(f">>> ❌ [SERIALIZER] Erros: {serializer.errors}")
+            print(f">>> [SERIALIZER] Erros: {serializer.errors}")
     else:
-        # Não entendeu nada (nem consulta, nem transação)
-        # return HttpResponse("OK") silencioso ou mande msg de ajuda
+        # Nao entendeu nada (nem consulta, nem transacao)
         pass
 
     if reply_text:

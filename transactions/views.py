@@ -4,11 +4,11 @@ from rest_framework import status
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.db import connection
-from .models import Transacao, Category  
+from django.db.models.deletion import ProtectedError
+from .models import Transacao, Category
 from .serializers import TransacaoSerializer
-from .parser import parse_message 
+from .nlp_parser import interpret_message as parse_message
 from rest_framework import generics
-from .services import identificar_categoria
 from .services import identificar_categoria, resolver_nome_categoria
 from django.db.models import Sum
 from datetime import timedelta
@@ -36,6 +36,53 @@ class WebhookTransactionView(APIView):
         if not parsed_data:
             return Response({
                 "reply": "Desculpe, não entendi. Tente algo como: '+15.50 almoço alimentação' ou '-50 gasolina transporte'."
+            }, status=status.HTTP_200_OK)
+
+        # 2a. CORRECAO — substitui a ultima transacao pelo valor corrigido
+        if parsed_data.get("is_correcao"):
+            usuario_padrao = User.objects.first()
+            if not usuario_padrao:
+                return Response({"error": "Nenhum usuario no banco."}, status=500)
+            ultima = Transacao.objects.filter(user=usuario_padrao).first()
+            if not ultima:
+                return Response({
+                    "reply": "Nao ha transacao anterior para corrigir.",
+                    "is_correcao": True,
+                }, status=status.HTTP_200_OK)
+            novo_valor = parsed_data["valor"]
+            nova = Transacao(
+                user=ultima.user,
+                value=novo_valor,
+                type=ultima.type,
+                description=ultima.description,
+                category=ultima.category,
+                date_transaction=ultima.date_transaction,
+            )
+            try:
+                ultima.delete()
+                nova.save()
+                return Response({
+                    "success": True,
+                    "reply": f"Corrigi a ultima transacao para R$ {novo_valor:.2f}",
+                    "is_correcao": True,
+                }, status=status.HTTP_200_OK)
+            except ProtectedError:
+                return Response({
+                    "reply": (
+                        "Nao foi possivel corrigir: a transacao esta vinculada "
+                        "a uma mensagem protegida. Entre em contato com o suporte."
+                    ),
+                    "is_correcao": True,
+                }, status=status.HTTP_200_OK)
+
+
+        # 2b. AMBIGUIDADE — pede clarificação em vez de salvar
+        if parsed_data.get("ambiguo"):
+            motivo = parsed_data.get("motivo_ambiguidade") or "não entendi completamente"
+            return Response({
+                "reply": f"Não entendi bem: {motivo}. Tente algo como 'gastei 50 no mercado'.",
+                "ambiguo": True,
+                "confianca": parsed_data.get("confianca"),
             }, status=status.HTTP_200_OK)
 
         # 3. ADAPTER
