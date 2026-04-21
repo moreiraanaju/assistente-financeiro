@@ -45,7 +45,6 @@ def evolution_webhook(request):
 
     try:
         payload = json.loads(request.body)
-        print(f">>> 📦 [PAYLOAD COMPLETO] {json.dumps(payload, indent=2, ensure_ascii=False)}")
     except json.JSONDecodeError:
         return HttpResponse("Invalid JSON", status=400)
 
