@@ -25,7 +25,6 @@ def send_evolution_message(number, text):
     """Envia mensagem ativa para a Uazapi"""
     if not text: return
     base = (UAZAPI_URL or "").strip().rstrip('/')
-    instance = (UAZAPI_INSTANCE_NAME or "").strip()
     token = (UAZAPI_TOKEN or "").strip()
     url = f"{base}/send/text"
     headers = {"token": token, "Content-Type": "application/json"}
@@ -83,7 +82,6 @@ def evolution_webhook(request):
     if match_combinado:
         categoria_detectada = match_combinado.group(1) 
         periodo_detectado = match_combinado.group(2)   
-        
         tipo_consulta = "filtro_combinado"
         extra_params = f"&periodo={periodo_detectado}&categoria={categoria_detectada}"
 
@@ -157,42 +155,50 @@ def evolution_webhook(request):
     # =========================================================================
     # LÓGICA DE CADASTRO (CRIAR TRANSAÇÃO)
     # =========================================================================
-    
+
     parsed_data = parse_message(text)
     reply_text = ""
 
     if parsed_data:
         print(f">>> 💰 [PARSER] Entendido: {parsed_data}")
 
-        # RF08 — trata ambiguidade antes de tentar salvar
-        if parsed_data.get("ambiguo"):
-            motivo = parsed_data.get("motivo_ambiguidade") or "não entendi bem"
-            reply_text = f"🤔 Hmm, {motivo}. Pode tentar de novo? Ex: 'gastei 50 no mercado' ou 'recebi 1500 de salário'"
-            send_evolution_message(number, reply_text)
-            return HttpResponse("OK")
-
-        # Trata correção de transação anterior
+        # ---- CORREÇÃO: substitui a última transação pelo valor corrigido ----
         if parsed_data.get("is_correcao"):
             from transactions.models import Transacao
+            from django.db.models.deletion import ProtectedError
             user = User.objects.first()
-            if user:
+            if not user:
+                reply_text = "Erro: Sem usuário cadastrado."
+            else:
                 ultima = Transacao.objects.filter(user=user).first()
-                if ultima:
+                if not ultima:
+                    reply_text = "Não há transação anterior para corrigir."
+                else:
+                    novo_valor = parsed_data["valor"]
                     nova = Transacao(
                         user=ultima.user,
-                        value=parsed_data["valor"],
+                        value=novo_valor,
                         type=ultima.type,
                         description=ultima.description,
                         category=ultima.category,
                         date_transaction=ultima.date_transaction,
                     )
-                    ultima.delete()
-                    nova.save()
-                    reply_text = f"✅ Corrigi para R$ {parsed_data['valor']:.2f}!"
-                else:
-                    reply_text = "Não encontrei nenhuma transação anterior para corrigir."
-            else:
-                reply_text = "Erro: Sem usuário cadastrado."
+                    try:
+                        ultima.delete()
+                        nova.save()
+                        reply_text = f"✅ Corrigi para R$ {novo_valor:.2f}!"
+                    except ProtectedError:
+                        reply_text = (
+                            "Não foi possível corrigir: a transação está vinculada "
+                            "a uma mensagem protegida. Entre em contato com o suporte."
+                        )
+            send_evolution_message(number, reply_text)
+            return HttpResponse("OK")
+
+        # ---- AMBIGUIDADE (RF08): pede clarificação em vez de salvar ----
+        if parsed_data.get("ambiguo"):
+            motivo = parsed_data.get("motivo_ambiguidade") or "não entendi bem"
+            reply_text = f"🤔 Hmm, {motivo}. Pode tentar de novo? Ex: 'gastei 50 no mercado' ou 'recebi 1500 de salário'"
             send_evolution_message(number, reply_text)
             return HttpResponse("OK")
 
@@ -205,7 +211,7 @@ def evolution_webhook(request):
             categoria = Category.objects.filter(name="Outros").first()
 
         tipo_banco = "IN" if parsed_data["tipo"] == "R" else "OUT"
-        
+
         transaction_data = {
             "description": parsed_data["descricao"],
             "value": parsed_data["valor"],
@@ -215,7 +221,7 @@ def evolution_webhook(request):
         }
 
         serializer = TransacaoSerializer(data=transaction_data)
-        
+
         if serializer.is_valid():
             user = User.objects.first()
             if user:
@@ -229,7 +235,6 @@ def evolution_webhook(request):
             print(f">>> ❌ [SERIALIZER] Erros: {serializer.errors}")
     else:
         # Não entendeu nada (nem consulta, nem transação)
-        # return HttpResponse("OK") silencioso ou mande msg de ajuda
         reply_text = "Não entendi sua mensagem. Tente: 'gastei 50 no mercado' ou 'quanto gastei esse mês?'"
         send_evolution_message(number, reply_text)
 
