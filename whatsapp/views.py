@@ -71,6 +71,49 @@ def evolution_webhook(request):
     print(f">>> 🕵️ [EXTRAÇÃO] Texto: '{text}' | Contexto anterior: {context}")
 
     # =========================================================================
+    # COMPLEMENTAÇÃO DE CONTEXTO
+    # =========================================================================
+    match_valor = re.search(r'\b(\d+(?:[.,]\d+)?)\b', text)
+    is_mensagem_so_valor = match_valor and re.fullmatch(
+        r'[\w\s]*\d+(?:[.,]\d+)?[\w\s]*', text.strip()
+    ) and not re.search(r'(gastei|recebi|ganhei|paguei|comprei|vendi)', text.lower())
+
+    if context and is_mensagem_so_valor and context.get("ultimo_parsed"):
+        novo_valor = float(match_valor.group(1).replace(",", "."))
+        parsed_complementado = {**context["ultimo_parsed"], "valor": novo_valor}
+        print(f">>> 🔗 [CONTEXTO] Complementando com valor {novo_valor} | Base: {context['ultimo_parsed']}")
+
+        categoria = None
+        if parsed_complementado.get("categoria_texto"):
+            categoria = Category.objects.filter(name__iexact=parsed_complementado["categoria_texto"]).first()
+        if not categoria:
+            categoria = identificar_categoria(parsed_complementado.get("descricao", ""))
+        if not categoria:
+            categoria = Category.objects.filter(name="Outros").first()
+
+        tipo_banco = "IN" if parsed_complementado.get("tipo") == "R" else "OUT"
+        transaction_data = {
+            "description": parsed_complementado.get("descricao", ""),
+            "value": novo_valor,
+            "type": tipo_banco,
+            "date_transaction": timezone.now(),
+            "category": categoria.id if categoria else None,
+        }
+        serializer = TransacaoSerializer(data=transaction_data)
+        if serializer.is_valid():
+            user = User.objects.first()
+            if user:
+                serializer.save(user=user)
+                cat_nome = categoria.name if categoria else "Outros"
+                set_context(number, {
+                    "ultimo_texto": text,
+                    "ultimo_parsed": parsed_complementado,
+                    "timestamp": timezone.now().isoformat(),
+                })
+                send_evolution_message(number, f"✅ Salvo em *{cat_nome}*! \nValor: R$ {novo_valor:.2f}")
+                return HttpResponse("OK")
+
+    # =========================================================================
     # DETECÇÃO DE INTENÇÃO (CONSULTAS)
     # =========================================================================
     text_lower = text.lower()
