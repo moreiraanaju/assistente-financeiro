@@ -7,10 +7,11 @@ from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from transactions.models import Category 
+from transactions.models import Category
 from transactions.services import identificar_categoria
 from transactions.nlp_parser import interpret_message as parse_message
 from transactions.serializers import TransacaoSerializer
+from whatsapp.context import get_context, set_context
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -66,7 +67,8 @@ def evolution_webhook(request):
     if not text:
         return JsonResponse({"reply": "Nenhuma mensagem válida recebida."})
 
-    print(f">>> 🕵️ [EXTRAÇÃO] Texto: '{text}'")
+    context = get_context(number)
+    print(f">>> 🕵️ [EXTRAÇÃO] Texto: '{text}' | Contexto anterior: {context}")
 
     # =========================================================================
     # DETECÇÃO DE INTENÇÃO (CONSULTAS)
@@ -76,7 +78,7 @@ def evolution_webhook(request):
     extra_params = ""
 
     # Tenta identificar filtro combinado PRIMEIRO
-    match_combinado = re.search(r'(?:gastei|gastos)\s+(?:com|em|no|na)?\s*(\w+) .*?(semana|m[êe]s)', text_lower)
+    match_combinado = re.search(r'(?:gastei|gastos)\s+(?:com|em|no|na)\s+(\w+).*?(semana|m[êe]s)', text_lower)
 
     if match_combinado:
         categoria_detectada = match_combinado.group(1) 
@@ -227,6 +229,11 @@ def evolution_webhook(request):
                 serializer.save(user=user)
                 cat_nome = categoria.name if categoria else "Outros"
                 reply_text = f"✅ Salvo em *{cat_nome}*! \nValor: R$ {parsed_data['valor']:.2f}"
+                set_context(number, {
+                    "ultimo_texto": text,
+                    "ultimo_parsed": parsed_data,
+                    "timestamp": timezone.now().isoformat(),
+                })
             else:
                 reply_text = "Erro: Sem usuário cadastrado."
         else:
