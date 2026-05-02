@@ -71,6 +71,64 @@ def evolution_webhook(request):
     print(f">>> 🕵️ [EXTRAÇÃO] Texto: '{text}' | Contexto anterior: {context}")
 
     # =========================================================================
+    # RESOLUÇÃO DE AMBIGUIDADE PENDENTE
+    # =========================================================================
+    if context and context.get("aguardando_confirmacao") and context.get("ultimo_parsed"):
+        parsed_reescrito = parse_message(text)
+        print(f">>> 🔄 [AMBIGUIDADE] Tentando resolver com: '{text}' | Reescrito: {parsed_reescrito}")
+        parsed_final = parsed_reescrito if (parsed_reescrito and not parsed_reescrito.get("ambiguo")) else None
+
+        if parsed_final is None:
+            valor_anterior = context["ultimo_parsed"].get("valor")
+            tem_valor_no_texto = bool(re.search(r'\b\d+(?:[.,]\d+)?\b', text))
+            if valor_anterior is not None and not tem_valor_no_texto:
+                if parsed_reescrito is None:
+                    texto_tentativa = f"{text} {valor_anterior}"
+                    print(f">>> 🔄 [AMBIGUIDADE] Segunda estratégia: tentando parsear '{texto_tentativa}'")
+                    parsed_tentativa = parse_message(texto_tentativa)
+                    if parsed_tentativa and not parsed_tentativa.get("ambiguo"):
+                        parsed_final = parsed_tentativa
+                        print(f">>> 🔄 [AMBIGUIDADE] Segunda estratégia: sucesso | Resultado: {parsed_final}")
+                else:
+                    parsed_mesclado = {**parsed_reescrito, "valor": valor_anterior}
+                    if parsed_mesclado.get("tipo") and parsed_mesclado.get("valor") is not None:
+                        parsed_final = parsed_mesclado
+                        print(f">>> 🔄 [AMBIGUIDADE] Segunda estratégia: mescla direta | Mesclado: {parsed_final}")
+
+        if parsed_final:
+            parsed_data = parsed_final
+
+            categoria = None
+            if parsed_data.get("categoria_texto"):
+                categoria = Category.objects.filter(name__iexact=parsed_data["categoria_texto"]).first()
+            if not categoria:
+                categoria = identificar_categoria(parsed_data.get("descricao", ""))
+            if not categoria:
+                categoria = Category.objects.filter(name="Outros").first()
+
+            tipo_banco = "IN" if parsed_data.get("tipo") == "R" else "OUT"
+            transaction_data = {
+                "description": parsed_data.get("descricao", ""),
+                "value": parsed_data["valor"],
+                "type": tipo_banco,
+                "date_transaction": timezone.now(),
+                "category": categoria.id if categoria else None,
+            }
+            serializer = TransacaoSerializer(data=transaction_data)
+            if serializer.is_valid():
+                user = User.objects.first()
+                if user:
+                    serializer.save(user=user)
+                    cat_nome = categoria.name if categoria else "Outros"
+                    set_context(number, {
+                        "ultimo_texto": text,
+                        "ultimo_parsed": parsed_data,
+                        "timestamp": timezone.now().isoformat(),
+                    })
+                    send_evolution_message(number, f"✅ Salvo em *{cat_nome}*! \nValor: R$ {parsed_data['valor']:.2f}")
+                    return HttpResponse("OK")
+
+    # =========================================================================
     # COMPLEMENTAÇÃO DE CONTEXTO
     # =========================================================================
     match_valor = re.search(r'\b(\d+(?:[.,]\d+)?)\b', text)
@@ -244,6 +302,12 @@ def evolution_webhook(request):
             motivo = parsed_data.get("motivo_ambiguidade") or "não entendi bem"
             reply_text = f"🤔 Hmm, {motivo}. Pode tentar de novo? Ex: 'gastei 50 no mercado' ou 'recebi 1500 de salário'"
             send_evolution_message(number, reply_text)
+            set_context(number, {
+                "aguardando_confirmacao": True,
+                "ultimo_texto": text,
+                "ultimo_parsed": parsed_data,
+                "timestamp": timezone.now().isoformat(),
+            })
             return HttpResponse("OK")
 
         categoria = None
@@ -285,7 +349,6 @@ def evolution_webhook(request):
     else:
         # Não entendeu nada (nem consulta, nem transação)
         reply_text = "Não entendi sua mensagem. Tente: 'gastei 50 no mercado' ou 'quanto gastei esse mês?'"
-        send_evolution_message(number, reply_text)
 
     if reply_text:
         send_evolution_message(number, reply_text)
