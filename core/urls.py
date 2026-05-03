@@ -11,5 +11,6 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('whatsapp/', include('whatsapp.urls')),  
     path('api/', include('transactions.urls')),
+    path('dashboard/', include('dashboard.urls')),
 ]
 
