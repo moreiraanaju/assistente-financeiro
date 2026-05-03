@@ -26,6 +26,7 @@ DEBUG = os.environ.get("DEBUG", "0") in ("1", "true", "True")
 
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '*').split(',')
 
+APPEND_SLASH = False
 
 # Application definition
 

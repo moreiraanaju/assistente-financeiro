@@ -7,29 +7,29 @@ from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from transactions.models import Category 
+from transactions.models import Category
 from transactions.services import identificar_categoria
 from transactions.nlp_parser import interpret_message as parse_message
 from transactions.serializers import TransacaoSerializer
+from whatsapp.context import get_context, set_context
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
 # Configs
-EVOLUTION_API_BASE = os.environ.get("EVOLUTION_API_BASE")
-EVOLUTION_INSTANCE_NAME = os.environ.get("EVOLUTION_INSTANCE_NAME")
-EVOLUTION_API_TOKEN = os.environ.get("EVOLUTION_API_TOKEN")
+UAZAPI_URL = os.environ.get("UAZAPI_URL")
+UAZAPI_TOKEN = os.environ.get("UAZAPI_TOKEN")
+UAZAPI_INSTANCE_NAME = os.environ.get("UAZAPI_INSTANCE_NAME")
 EVOLUTION_BOT_KEY = os.environ.get("EVOLUTION_BOT_KEY")
 
 def send_evolution_message(number, text):
-    """Envia mensagem ativa para a Evolution API"""
+    """Envia mensagem ativa para a Uazapi"""
     if not text: return
-    base = (EVOLUTION_API_BASE or "").strip().rstrip('/')
-    instance = (EVOLUTION_INSTANCE_NAME or "").strip()
-    token = (EVOLUTION_API_TOKEN or "").strip()
-    url = f"{base}/message/sendText/{instance}"
-    headers = {"apikey": token, "Content-Type": "application/json"}
-    payload = {"number": number, "text": text, "delay": 1200, "linkPreview": False}
+    base = (UAZAPI_URL or "").strip().rstrip('/')
+    token = (UAZAPI_TOKEN or "").strip()
+    url = f"{base}/send/text"
+    headers = {"token": token, "Content-Type": "application/json"}
+    payload = {"number": number, "text": text, "delay": 1200}
     try:
         requests.post(url, json=payload, headers=headers, timeout=10)
     except Exception as e:
@@ -50,22 +50,126 @@ def evolution_webhook(request):
         return HttpResponse("Invalid JSON", status=400)
 
     # 2. Extração
-    data = payload.get("data", {})
-    if data.get("key", {}).get("fromMe") == True:
+    message = payload.get("message", {})
+
+    # Ignora mensagens enviadas pelo próprio bot
+    if message.get("fromMe") == True:
         return HttpResponse("OK")
 
-    remote_jid = data.get("key", {}).get("remoteJid") or data.get("remoteJid")
-    if not remote_jid:
-        return JsonResponse({"status": "ignored", "reason": "no_jid"})
-        
-    number = remote_jid.split("@")[0]
-    msg_obj = data.get("message", {})
-    text = msg_obj.get("conversation") or msg_obj.get("extendedTextMessage", {}).get("text") or data.get("body")
+    # Uazapi envia número em message.chatid
+    number = message.get("chatid", "").replace("@s.whatsapp.net", "")
+    if not number:
+        return JsonResponse({"status": "ignored", "reason": "no_number"})
+
+    # Uazapi envia texto em message.text
+    text = message.get("text") or message.get("content")
 
     if not text:
         return JsonResponse({"reply": "Nenhuma mensagem válida recebida."})
 
-    print(f">>> 🕵️ [EXTRAÇÃO] Texto: '{text}'")
+    context = get_context(number)
+    print(f">>> 🕵️ [EXTRAÇÃO] Texto: '{text}' | Contexto anterior: {context}")
+
+    # =========================================================================
+    # RESOLUÇÃO DE AMBIGUIDADE PENDENTE
+    # =========================================================================
+    if context and context.get("aguardando_confirmacao") and context.get("ultimo_parsed"):
+        parsed_reescrito = parse_message(text)
+        print(f">>> 🔄 [AMBIGUIDADE] Tentando resolver com: '{text}' | Reescrito: {parsed_reescrito}")
+        parsed_final = parsed_reescrito if (parsed_reescrito and not parsed_reescrito.get("ambiguo")) else None
+
+        if parsed_final is None:
+            valor_anterior = context["ultimo_parsed"].get("valor")
+            tem_valor_no_texto = bool(re.search(r'\b\d+(?:[.,]\d+)?\b', text))
+            if valor_anterior is not None and not tem_valor_no_texto:
+                if parsed_reescrito is None:
+                    texto_tentativa = f"{text} {valor_anterior}"
+                    print(f">>> 🔄 [AMBIGUIDADE] Segunda estratégia: tentando parsear '{texto_tentativa}'")
+                    parsed_tentativa = parse_message(texto_tentativa)
+                    if parsed_tentativa and not parsed_tentativa.get("ambiguo"):
+                        parsed_final = parsed_tentativa
+                        print(f">>> 🔄 [AMBIGUIDADE] Segunda estratégia: sucesso | Resultado: {parsed_final}")
+                else:
+                    parsed_mesclado = {**parsed_reescrito, "valor": valor_anterior}
+                    if parsed_mesclado.get("tipo") and parsed_mesclado.get("valor") is not None:
+                        parsed_final = parsed_mesclado
+                        print(f">>> 🔄 [AMBIGUIDADE] Segunda estratégia: mescla direta | Mesclado: {parsed_final}")
+
+        if parsed_final:
+            parsed_data = parsed_final
+
+            categoria = None
+            if parsed_data.get("categoria_texto"):
+                categoria = Category.objects.filter(name__iexact=parsed_data["categoria_texto"]).first()
+            if not categoria:
+                categoria = identificar_categoria(parsed_data.get("descricao", ""))
+            if not categoria:
+                categoria = Category.objects.filter(name="Outros").first()
+
+            tipo_banco = "IN" if parsed_data.get("tipo") == "R" else "OUT"
+            transaction_data = {
+                "description": parsed_data.get("descricao", ""),
+                "value": parsed_data["valor"],
+                "type": tipo_banco,
+                "date_transaction": timezone.now(),
+                "category": categoria.id if categoria else None,
+            }
+            serializer = TransacaoSerializer(data=transaction_data)
+            if serializer.is_valid():
+                user = User.objects.first()
+                if user:
+                    serializer.save(user=user)
+                    cat_nome = categoria.name if categoria else "Outros"
+                    set_context(number, {
+                        "ultimo_texto": text,
+                        "ultimo_parsed": parsed_data,
+                        "timestamp": timezone.now().isoformat(),
+                    })
+                    send_evolution_message(number, f"✅ Salvo em *{cat_nome}*! \nValor: R$ {parsed_data['valor']:.2f}")
+                    return HttpResponse("OK")
+
+    # =========================================================================
+    # COMPLEMENTAÇÃO DE CONTEXTO
+    # =========================================================================
+    match_valor = re.search(r'\b(\d+(?:[.,]\d+)?)\b', text)
+    is_mensagem_so_valor = match_valor and re.fullmatch(
+        r'[\w\s]*\d+(?:[.,]\d+)?[\w\s]*', text.strip()
+    ) and not re.search(r'(gastei|recebi|ganhei|paguei|comprei|vendi)', text.lower())
+
+    if context and is_mensagem_so_valor and context.get("ultimo_parsed"):
+        novo_valor = float(match_valor.group(1).replace(",", "."))
+        parsed_complementado = {**context["ultimo_parsed"], "valor": novo_valor}
+        print(f">>> 🔗 [CONTEXTO] Complementando com valor {novo_valor} | Base: {context['ultimo_parsed']}")
+
+        categoria = None
+        if parsed_complementado.get("categoria_texto"):
+            categoria = Category.objects.filter(name__iexact=parsed_complementado["categoria_texto"]).first()
+        if not categoria:
+            categoria = identificar_categoria(parsed_complementado.get("descricao", ""))
+        if not categoria:
+            categoria = Category.objects.filter(name="Outros").first()
+
+        tipo_banco = "IN" if parsed_complementado.get("tipo") == "R" else "OUT"
+        transaction_data = {
+            "description": parsed_complementado.get("descricao", ""),
+            "value": novo_valor,
+            "type": tipo_banco,
+            "date_transaction": timezone.now(),
+            "category": categoria.id if categoria else None,
+        }
+        serializer = TransacaoSerializer(data=transaction_data)
+        if serializer.is_valid():
+            user = User.objects.first()
+            if user:
+                serializer.save(user=user)
+                cat_nome = categoria.name if categoria else "Outros"
+                set_context(number, {
+                    "ultimo_texto": text,
+                    "ultimo_parsed": parsed_complementado,
+                    "timestamp": timezone.now().isoformat(),
+                })
+                send_evolution_message(number, f"✅ Salvo em *{cat_nome}*! \nValor: R$ {novo_valor:.2f}")
+                return HttpResponse("OK")
 
     # =========================================================================
     # DETECÇÃO DE INTENÇÃO (CONSULTAS)
@@ -75,16 +179,13 @@ def evolution_webhook(request):
     extra_params = ""
 
     # Tenta identificar filtro combinado PRIMEIRO
-    match_combinado = re.search(r'(?:gastei|gastos)\s+(?:com|em|no|na)?\s*(\w+) .*?(semana|m[êe]s)', text_lower)
+    match_combinado = re.search(r'(?:gastei|gastos)\s+(?:com|em|no|na)\s+(\w+).*?(semana|m[êe]s)', text_lower)
 
     if match_combinado:
         categoria_detectada = match_combinado.group(1) 
         periodo_detectado = match_combinado.group(2)   
-        
         tipo_consulta = "filtro_combinado"
         extra_params = f"&periodo={periodo_detectado}&categoria={categoria_detectada}"
-
-
 
     # ATENÇÃO: Use ELIF aqui para não sobrescrever o filtro combinado!
 
@@ -154,26 +255,26 @@ def evolution_webhook(request):
         return HttpResponse("OK")
 
     # =========================================================================
-    # LOGICA DE CADASTRO (CRIAR TRANSACAO)
+    # LÓGICA DE CADASTRO (CRIAR TRANSAÇÃO)
     # =========================================================================
 
     parsed_data = parse_message(text)
     reply_text = ""
 
     if parsed_data:
-        print(f">>> [PARSER] Entendido: {parsed_data}")
+        print(f">>> 💰 [PARSER] Entendido: {parsed_data}")
 
-        # ---- CORRECAO: substitui a ultima transacao pelo valor corrigido ----
+        # ---- CORREÇÃO: substitui a última transação pelo valor corrigido ----
         if parsed_data.get("is_correcao"):
+            from transactions.models import Transacao
+            from django.db.models.deletion import ProtectedError
             user = User.objects.first()
             if not user:
-                reply_text = "Erro: Sem usuario cadastrado."
+                reply_text = "Erro: Sem usuário cadastrado."
             else:
-                from transactions.models import Transacao
-                from django.db.models.deletion import ProtectedError
                 ultima = Transacao.objects.filter(user=user).first()
                 if not ultima:
-                    reply_text = "Nao ha transacao anterior para corrigir."
+                    reply_text = "Não há transação anterior para corrigir."
                 else:
                     novo_valor = parsed_data["valor"]
                     nova = Transacao(
@@ -187,20 +288,26 @@ def evolution_webhook(request):
                     try:
                         ultima.delete()
                         nova.save()
-                        reply_text = f"Corrigi a ultima transacao para R$ {novo_valor:.2f}"
+                        reply_text = f"✅ Corrigi para R$ {novo_valor:.2f}!"
                     except ProtectedError:
                         reply_text = (
-                            "Nao foi possivel corrigir: a transacao esta vinculada "
+                            "Não foi possível corrigir: a transação está vinculada "
                             "a uma mensagem protegida. Entre em contato com o suporte."
                         )
             send_evolution_message(number, reply_text)
             return HttpResponse("OK")
 
-        # ---- AMBIGUIDADE: pede clarificacao em vez de salvar ----
+        # ---- AMBIGUIDADE (RF08): pede clarificação em vez de salvar ----
         if parsed_data.get("ambiguo"):
-            motivo = parsed_data.get("motivo_ambiguidade") or "nao entendi completamente"
-            reply_text = f"Nao entendi bem: {motivo}. Tente algo como 'gastei 50 no mercado'."
+            motivo = parsed_data.get("motivo_ambiguidade") or "não entendi bem"
+            reply_text = f"🤔 Hmm, {motivo}. Pode tentar de novo? Ex: 'gastei 50 no mercado' ou 'recebi 1500 de salário'"
             send_evolution_message(number, reply_text)
+            set_context(number, {
+                "aguardando_confirmacao": True,
+                "ultimo_texto": text,
+                "ultimo_parsed": parsed_data,
+                "timestamp": timezone.now().isoformat(),
+            })
             return HttpResponse("OK")
 
         categoria = None
@@ -228,15 +335,20 @@ def evolution_webhook(request):
             if user:
                 serializer.save(user=user)
                 cat_nome = categoria.name if categoria else "Outros"
-                reply_text = f"Salvo em *{cat_nome}*! \nValor: R$ {parsed_data['valor']:.2f}"
+                reply_text = f"✅ Salvo em *{cat_nome}*! \nValor: R$ {parsed_data['valor']:.2f}"
+                set_context(number, {
+                    "ultimo_texto": text,
+                    "ultimo_parsed": parsed_data,
+                    "timestamp": timezone.now().isoformat(),
+                })
             else:
-                reply_text = "Erro: Sem usuario cadastrado."
+                reply_text = "Erro: Sem usuário cadastrado."
         else:
             reply_text = "Erro ao salvar. Verifique o formato."
-            print(f">>> [SERIALIZER] Erros: {serializer.errors}")
+            print(f">>> ❌ [SERIALIZER] Erros: {serializer.errors}")
     else:
-        # Nao entendeu nada (nem consulta, nem transacao)
-        pass
+        # Não entendeu nada (nem consulta, nem transação)
+        reply_text = "Não entendi sua mensagem. Tente: 'gastei 50 no mercado' ou 'quanto gastei esse mês?'"
 
     if reply_text:
         send_evolution_message(number, reply_text)
