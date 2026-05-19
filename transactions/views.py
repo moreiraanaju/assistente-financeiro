@@ -322,3 +322,102 @@ class ConsultaView(APIView):
         except Exception as e:
             print(f">>> ❌ Erro no SQL/Python: {str(e)}")
             return Response({"error": "Erro ao processar consulta", "detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class InsightsView(APIView):
+    permission_classes = []
+
+    SQL_SALDO = """
+        SELECT
+            SUM(CASE WHEN type = 'IN' THEN value ELSE 0 END) -
+            SUM(CASE WHEN type = 'OUT' THEN value ELSE 0 END) AS saldo_atual
+        FROM public.transactions_transacao
+        WHERE user_id = %s;
+    """
+
+    SQL_RECEITAS_MES = """
+        SELECT SUM(value)
+        FROM public.transactions_transacao
+        WHERE type = 'IN'
+          AND EXTRACT(MONTH FROM date_transaction) = EXTRACT(MONTH FROM NOW())
+          AND EXTRACT(YEAR FROM date_transaction) = EXTRACT(YEAR FROM NOW())
+          AND user_id = %s;
+    """
+
+    SQL_DESPESAS_MES = """
+        SELECT SUM(value)
+        FROM public.transactions_transacao
+        WHERE type = 'OUT'
+          AND EXTRACT(MONTH FROM date_transaction) = EXTRACT(MONTH FROM NOW())
+          AND EXTRACT(YEAR FROM date_transaction) = EXTRACT(YEAR FROM NOW())
+          AND user_id = %s;
+    """
+
+    SQL_DESPESAS_MES_ANTERIOR = """
+        SELECT SUM(value)
+        FROM public.transactions_transacao
+        WHERE type = 'OUT'
+          AND EXTRACT(MONTH FROM date_transaction) = EXTRACT(MONTH FROM NOW() - INTERVAL '1 month')
+          AND EXTRACT(YEAR FROM date_transaction) = EXTRACT(YEAR FROM NOW() - INTERVAL '1 month')
+          AND user_id = %s;
+    """
+
+    SQL_CATEGORIA_LIDER = """
+        SELECT c.name, SUM(t.value) AS gasto_total
+        FROM public.transactions_transacao t
+        JOIN public.transactions_category c ON t.category_id = c.id
+        WHERE t.type = 'OUT'
+          AND EXTRACT(MONTH FROM t.date_transaction) = EXTRACT(MONTH FROM NOW())
+          AND EXTRACT(YEAR FROM t.date_transaction) = EXTRACT(YEAR FROM NOW())
+          AND t.user_id = %s
+        GROUP BY c.name
+        ORDER BY gasto_total DESC
+        LIMIT 1;
+    """
+
+    def get(self, request):
+        usuario = User.objects.first()
+        if not usuario:
+            return Response({"error": "Nenhum usuário cadastrado"}, status=500)
+        user_id = usuario.id
+
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(self.SQL_SALDO, [user_id])
+                row = cursor.fetchone()
+                saldo_atual = float(row[0]) if row and row[0] is not None else 0.0
+
+                cursor.execute(self.SQL_RECEITAS_MES, [user_id])
+                row = cursor.fetchone()
+                total_receitas_mes = float(row[0]) if row and row[0] is not None else 0.0
+
+                cursor.execute(self.SQL_DESPESAS_MES, [user_id])
+                row = cursor.fetchone()
+                total_despesas_mes = float(row[0]) if row and row[0] is not None else 0.0
+
+                cursor.execute(self.SQL_DESPESAS_MES_ANTERIOR, [user_id])
+                row = cursor.fetchone()
+                total_despesas_mes_anterior = float(row[0]) if row and row[0] is not None else 0.0
+
+                cursor.execute(self.SQL_CATEGORIA_LIDER, [user_id])
+                row = cursor.fetchone()
+                categoria_lider = row[0] if row else None
+
+            if total_despesas_mes_anterior > 0:
+                comparativo_mes_anterior = round(
+                    ((total_despesas_mes - total_despesas_mes_anterior) / total_despesas_mes_anterior) * 100, 2
+                )
+            else:
+                comparativo_mes_anterior = None
+
+            return Response({
+                "saldo_atual": saldo_atual,
+                "total_receitas_mes": total_receitas_mes,
+                "total_despesas_mes": total_despesas_mes,
+                "categoria_lider": categoria_lider,
+                "comparativo_mes_anterior": comparativo_mes_anterior,
+            })
+
+        except Exception as e:
+            print(f">>> ❌ Erro no InsightsView: {str(e)}")
+            return Response({"error": "Erro ao gerar insights", "detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

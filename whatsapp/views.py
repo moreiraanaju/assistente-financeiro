@@ -12,6 +12,7 @@ from transactions.services import identificar_categoria
 from transactions.nlp_parser import interpret_message as parse_message
 from transactions.serializers import TransacaoSerializer
 from whatsapp.context import get_context, set_context
+from whatsapp.gemini import formatar_resumo, interpretar_mensagem
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -210,13 +211,41 @@ def evolution_webhook(request):
     elif re.search(r'\b(ganhei|recebi|receitas|entradas)\b', text_lower):
         tipo_consulta = "receitas"
 
+    elif re.search(r'resumo|insights|como est[aã]o|vis[aã]o geral|overview', text_lower):
+        tipo_consulta = "insights"
+
     # --- EXECUÇÃO DA CONSULTA ---
     if tipo_consulta:
         print(f">>>🔍 [CONSULTA] Tipo: {tipo_consulta} | Params: {extra_params}")
         try:
             base_url = os.environ.get("API_BASE_URL", "http://127.0.0.1:8000")
+
+            if tipo_consulta == "insights":
+                response = requests.get(f"{base_url}/api/insights/", timeout=5)
+                dados = response.json()
+                if response.status_code == 200:
+                    reply_text = formatar_resumo(dados)
+                    if not reply_text:
+                        saldo = dados.get("saldo_atual", 0.0)
+                        receitas = dados.get("total_receitas_mes", 0.0)
+                        despesas = dados.get("total_despesas_mes", 0.0)
+                        lider = dados.get("categoria_lider") or "—"
+                        comparativo = dados.get("comparativo_mes_anterior")
+                        variacao = f"{comparativo:+.1f}%" if comparativo is not None else "sem dados"
+                        reply_text = (
+                            f"📊 *Resumo financeiro:*\n"
+                            f"💰 Saldo: R$ {saldo:.2f}\n"
+                            f"📈 Receitas do mês: R$ {receitas:.2f}\n"
+                            f"📉 Despesas do mês: R$ {despesas:.2f}\n"
+                            f"🏆 Maior gasto: {lider}\n"
+                            f"📅 Variação vs mês anterior: {variacao}"
+                        )
+                else:
+                    reply_text = f"⚠️ Erro ao buscar insights: {dados.get('error')}"
+                send_evolution_message(number, reply_text)
+                return HttpResponse("OK")
+
             url_api = f"{base_url}/api/consulta/?tipo={tipo_consulta}{extra_params}"
-            
             response = requests.get(url_api, timeout=5)
             dados = response.json()
 
@@ -347,8 +376,44 @@ def evolution_webhook(request):
             reply_text = "Erro ao salvar. Verifique o formato."
             print(f">>> ❌ [SERIALIZER] Erros: {serializer.errors}")
     else:
-        # Não entendeu nada (nem consulta, nem transação)
-        reply_text = "Não entendi sua mensagem. Tente: 'gastei 50 no mercado' ou 'quanto gastei esse mês?'"
+        # Fallback Gemini: tenta interpretar o que o nlp_parser não entendeu
+        gemini_parsed = interpretar_mensagem(text)
+        if gemini_parsed:
+            print(f">>> 🤖 [GEMINI] Interpretado: {gemini_parsed}")
+            categoria = None
+            if gemini_parsed.get("categoria_texto"):
+                categoria = Category.objects.filter(name__iexact=gemini_parsed["categoria_texto"]).first()
+            if not categoria:
+                categoria = identificar_categoria(gemini_parsed.get("descricao", ""))
+            if not categoria:
+                categoria = Category.objects.filter(name="Outros").first()
+
+            tipo_banco = "IN" if gemini_parsed["tipo"] == "R" else "OUT"
+            transaction_data = {
+                "description": gemini_parsed.get("descricao", ""),
+                "value": gemini_parsed["valor"],
+                "type": tipo_banco,
+                "date_transaction": timezone.now(),
+                "category": categoria.id if categoria else None,
+            }
+            serializer = TransacaoSerializer(data=transaction_data)
+            if serializer.is_valid():
+                user = User.objects.first()
+                if user:
+                    serializer.save(user=user)
+                    cat_nome = categoria.name if categoria else "Outros"
+                    set_context(number, {
+                        "ultimo_texto": text,
+                        "ultimo_parsed": gemini_parsed,
+                        "timestamp": timezone.now().isoformat(),
+                    })
+                    reply_text = f"✅ Salvo em *{cat_nome}*! \nValor: R$ {gemini_parsed['valor']:.2f}"
+                else:
+                    reply_text = "Erro: Sem usuário cadastrado."
+            else:
+                reply_text = "Não entendi sua mensagem. Tente: 'gastei 50 no mercado' ou 'quanto gastei esse mês?'"
+        else:
+            reply_text = "Não entendi sua mensagem. Tente: 'gastei 50 no mercado' ou 'quanto gastei esse mês?'"
 
     if reply_text:
         send_evolution_message(number, reply_text)
