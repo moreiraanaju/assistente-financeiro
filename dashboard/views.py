@@ -42,6 +42,7 @@ def get_date_range(periodo, now=None):
         start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         next_month = subtract_months(start, -1)
         end = next_month - timedelta(seconds=1)
+        prev_start = subtract_months(start, 1)
         prev_end = start - timedelta(seconds=1)
         
     return start, end, prev_start, prev_end
