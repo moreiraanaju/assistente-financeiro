@@ -1,0 +1,38 @@
+{% extends "dashboard/base.html" %}
+
+{% block content %}
+<h2>Visão Geral</h2>
+<p>Bem-vindo ao seu dashboard financeiro, {{ request.user.username }}.</p>
+
+<!-- Exemplo de container para futuro gráfico -->
+<div style="width: 100%; max-width: 600px; margin: 2rem auto; background: white; padding: 1rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+    <canvas id="meuGraficoVazio"></canvas>
+</div>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        // Inicialização de um gráfico vazio apenas para testar a inclusão do Chart.js
+        const ctx = document.getElementById('meuGraficoVazio').getContext('2d');
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['Nenhum Dado'],
+                datasets: [{
+                    label: 'Valores',
+                    data: [0],
+                    backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+    });
+</script>
+{% endblock content %}
