@@ -151,3 +151,33 @@ class IntentDetectorRegistroTests(SimpleTestCase):
 
     def test_ola(self):
         self.assertIsNone(detect_intent("oi tudo bem"))
+
+
+class IntentDetectorFalsoPositivoTests(SimpleTestCase):
+    """
+    Testes de regressão para falsos positivos corrigidos no Sprint 5.
+    Garante que mensagens de registro não sejam confundidas com consultas.
+    """
+
+    def test_ultimas_compras_nao_e_historico(self):
+        """'comprei as últimas 3 camisas' não deve virar historico."""
+        self.assertIsNone(detect_intent("comprei as últimas 3 camisas por 45 reais"))
+
+    def test_ultimas_unidades_nao_e_historico(self):
+        """'gastei nas últimas 2 semanas' — período, não extrato de transações."""
+        # Aceita-se retornar None; o importante é não retornar historico.
+        result = detect_intent("gastei nas últimas 2 semanas")
+        if result is not None:
+            self.assertNotEqual(result["tipo"], "historico")
+
+    def test_extrato_e_historico(self):
+        """'extrato' ainda deve funcionar normalmente."""
+        self.assertEqual(detect_intent("me manda o extrato")["tipo"], "historico")
+
+    def test_ultimas_transacoes_e_historico(self):
+        """'últimas transações' deve retornar historico."""
+        self.assertEqual(detect_intent("me mostra as últimas transações")["tipo"], "historico")
+
+    def test_ultimas_5_e_historico(self):
+        """'últimas 5 transações' deve retornar historico."""
+        self.assertEqual(detect_intent("me manda as últimas 5 transações")["tipo"], "historico")

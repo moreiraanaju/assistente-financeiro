@@ -1,4 +1,4 @@
-from django.test import TestCase
+from django.test import TestCase, SimpleTestCase
 from .parser import parse_message
 from .nlp_parser import interpret_message
 
@@ -246,35 +246,35 @@ class InterpretMessageTestCase(TestCase):
 
     def test_categoria_alimentacao_por_mercado(self):
         r = interpret_message("gastei 50 mercado")
-        self.assertEqual(r["categoria_texto"], "alimentação")
+        self.assertEqual(r["categoria_texto"], "Alimentação")
 
     def test_categoria_alimentacao_por_restaurante(self):
         r = interpret_message("comprei 100 no restaurante")
-        self.assertEqual(r["categoria_texto"], "alimentação")
+        self.assertEqual(r["categoria_texto"], "Alimentação")
 
     def test_categoria_transporte_por_uber(self):
         r = interpret_message("paguei 30 uber")
-        self.assertEqual(r["categoria_texto"], "transporte")
+        self.assertEqual(r["categoria_texto"], "Transporte")
 
     def test_categoria_transporte_por_gasolina(self):
         r = interpret_message("30 gasolina")
-        self.assertEqual(r["categoria_texto"], "transporte")
+        self.assertEqual(r["categoria_texto"], "Transporte")
 
-    def test_categoria_entretenimento_por_cinema(self):
+    def test_categoria_lazer_por_cinema(self):
         r = interpret_message("15 cinema")
-        self.assertEqual(r["categoria_texto"], "entretenimento")
+        self.assertEqual(r["categoria_texto"], "Lazer")
 
     def test_categoria_saude_por_farmacia(self):
         r = interpret_message("gastei 80 farmácia")
-        self.assertEqual(r["categoria_texto"], "saúde")
+        self.assertEqual(r["categoria_texto"], "Saúde")
 
-    def test_categoria_moradia_por_aluguel(self):
+    def test_categoria_casa_por_aluguel(self):
         r = interpret_message("paguei 1200 aluguel")
-        self.assertEqual(r["categoria_texto"], "moradia")
+        self.assertEqual(r["categoria_texto"], "Casa")
 
-    def test_categoria_none_para_termo_desconhecido(self):
+    def test_categoria_compras_por_presente(self):
         r = interpret_message("gastei 50 presente")
-        self.assertIsNone(r["categoria_texto"])
+        self.assertEqual(r["categoria_texto"], "Compras")
 
     # ------------------------------------------------------------------
     # Variações de notação numérica brasileira
@@ -290,8 +290,8 @@ class InterpretMessageTestCase(TestCase):
 
     def test_valor_com_casas_decimais(self):
         r = interpret_message("paguei 1.234,56 imposto")
-        # Regex captura o primeiro número encontrado (1)
         self.assertIsNotNone(r)
+        self.assertAlmostEqual(r["valor"], 1234.56)
 
     # ------------------------------------------------------------------
     # Palavras-chave de receita expandidas
@@ -634,5 +634,110 @@ class Sprint3TestCase(TestCase):
 
     def test_categoria_ainda_funciona(self):
         r = interpret_message("gastei 50 mercado")
-        self.assertEqual(r["categoria_texto"], "alimentação")
+        self.assertEqual(r["categoria_texto"], "Alimentação")
+
+
+# =============================================================================
+# SPRINT 5 — Testes de precisão do NLP Parser
+# Cobre: formato monetário BR, bugs de categoria/tipo, novas keywords
+# =============================================================================
+
+class NlpParserPrecisaoTests(SimpleTestCase):
+    """
+    Testes que não precisam de banco de dados (SimpleTestCase).
+    Cobrem os bugs e melhorias implementados no Sprint 5.
+    """
+
+    # ------------------------------------------------------------------
+    # Formato monetário brasileiro
+    # ------------------------------------------------------------------
+
+    def test_milhar_ponto_sem_decimal(self):
+        """'1.500' deve ser 1500, não 1.5."""
+        r = interpret_message("paguei 1.500 de aluguel")
+        self.assertIsNotNone(r)
+        self.assertAlmostEqual(r["valor"], 1500.0)
+
+    def test_milhar_ponto_com_decimal_virgula(self):
+        """'1.500,00' deve ser 1500.0."""
+        r = interpret_message("paguei 1.500,00 de aluguel")
+        self.assertIsNotNone(r)
+        self.assertAlmostEqual(r["valor"], 1500.0)
+
+    def test_dois_milhares(self):
+        """'2.000' deve ser 2000.0."""
+        r = interpret_message("recebi 2.000 de salário")
+        self.assertIsNotNone(r)
+        self.assertAlmostEqual(r["valor"], 2000.0)
+
+    def test_decimal_virgula_isolado(self):
+        """'29,99' deve ser 29.99."""
+        r = interpret_message("gastei 29,99 no app")
+        self.assertIsNotNone(r)
+        self.assertAlmostEqual(r["valor"], 29.99)
+
+    def test_decimal_ponto_preservado(self):
+        """'15.90' (ponto decimal normal) deve ser preservado."""
+        r = interpret_message("gastei 15.90 cinema")
+        self.assertIsNotNone(r)
+        self.assertAlmostEqual(r["valor"], 15.9)
+
+    # ------------------------------------------------------------------
+    # pix não é sinal de renda
+    # ------------------------------------------------------------------
+
+    def test_pix_despesa_nao_categoriza_como_renda(self):
+        """'pix pro mercado' não deve gerar categoria_texto='Renda'."""
+        r = interpret_message("fiz pix de 50 pro mercado")
+        self.assertIsNotNone(r)
+        self.assertNotEqual(r["categoria_texto"], "Renda")
+
+    def test_pix_pagamento_tipo_despesa(self):
+        """'pix de 50' sem palavra de receita deve ser tipo D."""
+        r = interpret_message("pix de 50")
+        self.assertIsNotNone(r)
+        self.assertEqual(r["tipo"], "D")
+
+    # ------------------------------------------------------------------
+    # fatura como despesa
+    # ------------------------------------------------------------------
+
+    def test_fatura_tipo_despesa(self):
+        r = interpret_message("fatura 500")
+        self.assertIsNotNone(r)
+        self.assertEqual(r["tipo"], "D")
+
+    # ------------------------------------------------------------------
+    # Novas palavras-chave de categoria
+    # ------------------------------------------------------------------
+
+    def test_categoria_academia(self):
+        r = interpret_message("paguei 80 de academia")
+        self.assertIsNotNone(r)
+        self.assertEqual(r["categoria_texto"], "Saúde")
+
+    def test_categoria_drogaria(self):
+        r = interpret_message("fui na drogaria 35")
+        self.assertIsNotNone(r)
+        self.assertEqual(r["categoria_texto"], "Saúde")
+
+    def test_categoria_delivery(self):
+        r = interpret_message("gastei 35 no delivery")
+        self.assertIsNotNone(r)
+        self.assertEqual(r["categoria_texto"], "Alimentação")
+
+    def test_categoria_game(self):
+        r = interpret_message("comprei 60 de game")
+        self.assertIsNotNone(r)
+        self.assertEqual(r["categoria_texto"], "Lazer")
+
+    def test_categoria_combustivel_sem_acento(self):
+        r = interpret_message("gastei 150 em combustivel")
+        self.assertIsNotNone(r)
+        self.assertEqual(r["categoria_texto"], "Transporte")
+
+    def test_categoria_energia(self):
+        r = interpret_message("paguei 120 conta de energia")
+        self.assertIsNotNone(r)
+        self.assertEqual(r["categoria_texto"], "Casa")
 

@@ -70,8 +70,11 @@ def detect_intent(text: str) -> dict | None:
     # ------------------------------------------------------------------
     # 2. HISTÓRICO / EXTRATO  ex: "extrato", "últimas 10 transações"
     # ------------------------------------------------------------------
+    # "ultimas" como palavra solta foi removida propositalmente —
+    #   causava falso positivo em "comprei as últimas 3 camisas".
+    #   Requer agora: "transações/lançamentos" após (com ou sem número).
     if re.search(
-        r'\b(extrato|historico|hist[oó]rico|ultimas?|[uú]ltimas?\s+\d+|transacoes|transa[çc][oõ]es|lancamentos|lan[çc]amentos)\b',
+        r'\b(extrato|historico|ultimas?\s+(?:\d+\s+)?transacoes|ultimas?\s+(?:\d+\s+)?lancamentos|transacoes|lancamentos)\b',
         tl,
     ):
         n_match = re.search(r'(\d+)', tl)
@@ -126,19 +129,19 @@ def detect_intent(text: str) -> dict | None:
         return {"tipo": "despesas", "extra_params": {}}
 
     # ------------------------------------------------------------------
-    # 8. CATEGORIAS  ex: "onde gastei?", "por categoria"
+    # 9. CATEGORIAS  ex: "onde gastei?", "por categoria"
     # ------------------------------------------------------------------
     if re.search(r'\b(categoria|categorias|onde gastei|por categoria)\b', tl):
         return {"tipo": "categorias", "extra_params": {}}
 
     # ------------------------------------------------------------------
-    # 9. SALDO
+    # 10. SALDO
     # ------------------------------------------------------------------
     if re.search(r'\b(saldo|quanto tenho|quanto sobrou|meu saldo)\b', tl):
         return {"tipo": "saldo", "extra_params": {}}
 
     # ------------------------------------------------------------------
-    # 10. RECEITAS GERAIS
+    # 11. RECEITAS GERAIS
     # ------------------------------------------------------------------
     if re.search(r'\b(ganhei|recebi|receitas|entradas)\b', tl) and re.search(
         r'\b(total|quanto|m[eê]s|mes)\b', tl
@@ -146,7 +149,7 @@ def detect_intent(text: str) -> dict | None:
         return {"tipo": "receitas", "extra_params": {}}
 
     # ------------------------------------------------------------------
-    # 11. INSIGHTS / RESUMO GERAL
+    # 12. INSIGHTS / RESUMO GERAL
     # ------------------------------------------------------------------
     if re.search(
         r'\b(resumo|insights?|como estao|como est[aã]o|visao geral|visão geral|overview|me mostra|financas|finan[çc]as)\b',
@@ -155,7 +158,7 @@ def detect_intent(text: str) -> dict | None:
         return {"tipo": "insights", "extra_params": {}}
 
     # ------------------------------------------------------------------
-    # 12. FALLBACK: "quanto gastei?" sem período → despesas do mês atual
+    # 13. FALLBACK: "quanto gastei?" sem período → despesas do mês atual
     # ------------------------------------------------------------------
     if re.search(r'\b(quanto gastei|qual meu gasto|meus gastos|quanto foi)\b', tl):
         return {"tipo": "despesas", "extra_params": {}}

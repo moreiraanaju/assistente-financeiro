@@ -13,7 +13,7 @@ Formato de saída padrão (v3.0):
     "is_correcao": bool,
 }
 
-VERSÃO 3.1 - Correções:
+VERSÃO 3.2 - Correções Sprint 5:
 1. ✅ Aceita frases sem palavras-chave (mais naturais)
 2. ✅ Palavras-chave expandidas por categoria
 3. ✅ Linguagem natural flexível (com preposições)
@@ -23,6 +23,10 @@ VERSÃO 3.1 - Correções:
 7. ✅ Sinalização de ambiguidade com motivo explicado
 8. ✅ [fix] CATEGORIAS sincronizado com MAPEAMENTO de services.py (nomes de DB)
 9. ✅ [fix] _VERBOS_ACAO promovido a constante de módulo
+10. ✅ [fix] Normalização de formato monetário brasileiro (1.500 → 1500, 50,90 → 50.90)
+11. ✅ [fix] Remove "pix" de CATEGORIAS["Renda"] (pix é meio de pagamento, não sinal de renda)
+12. ✅ [fix] Adiciona "fatura" a PALAVRAS_DESPESA
+13. ✅ [fix] CATEGORIAS expandido com novas palavras-chave reais
 """
 
 import re
@@ -39,26 +43,33 @@ from unidecode import unidecode
 # Manter sincronizado com services.MAPEAMENTO.
 # ---------------------------------------------------------------------------
 CATEGORIAS = {
-    "Renda":        ["salario", "salário", "pix", "deposito", "depósito", "venda", "bonus", "bônus"],
+    # "pix" removido: pix é meio de pagamento, não sinal de renda.
+    # O fallback em services.MAPEAMENTO["Renda"] ainda cobre "recebi um pix de X".
+    "Renda":        ["salario", "salário", "deposito", "depósito", "venda", "bonus", "bônus"],
     "Alimentação":  ["mercado", "supermercado", "ifood", "restaurante", "lanche", "pizza",
                      "padaria", "almoco", "almoço", "jantar", "acai", "açaí", "hambúrguer",
-                     "açougue", "café", "comida"],
+                     "açougue", "café", "comida", "delivery", "carne", "fruta", "verdura",
+                     "hortifruti", "sushi", "burguer", "hamburguer"],
     "Transporte":   ["uber", "99", "taxi", "onibus", "ônibus", "gasolina", "combustível",
-                     "posto", "estacionamento", "passagem", "trem", "avião", "transporte"],
+                     "posto", "estacionamento", "passagem", "trem", "avião", "transporte",
+                     "combustivel", "metro", "metrô", "brt"],
     "Casa":         ["luz", "agua", "água", "internet", "gas", "gás", "condominio", "condomínio",
-                     "claro", "vivo", "net", "aluguel", "moradia"],
+                     "claro", "vivo", "net", "aluguel", "moradia", "energia", "telefone"],
     "Saúde":        ["farmacia", "farmácia", "remedio", "remédio", "medicamento", "medico",
-                     "médico", "dentista", "consulta", "exame", "hospital", "saúde"],
+                     "médico", "dentista", "consulta", "exame", "hospital", "saúde",
+                     "academia", "drogaria", "gym", "plano de saude"],
     "Lazer":        ["cinema", "filme", "bar", "viagem", "netflix", "spotify", "ingresso",
-                     "jogo", "show", "música", "streaming", "diversão"],
-    "Compras":      ["shopee", "amazon", "roupa", "loja", "shein", "presente"],
+                     "jogo", "show", "música", "streaming", "diversão",
+                     "game", "disney", "hbo", "prime", "apple tv"],
+    "Compras":      ["shopee", "amazon", "roupa", "loja", "shein", "presente",
+                     "americanas", "renner", "magazine", "casas bahia"],
     "Educação":     ["faculdade", "curso", "escola", "livro", "aula"],
     "Investimento": ["cdb", "poupanca", "poupança", "tesouro", "cripto"],
 }
 
 # Palavras de ação (método e tipo)
 PALAVRAS_RECEITA = ["recebi", "ganhei", "entrada", "entrou", "deposito", "depósito", "transferência", "salário"]
-PALAVRAS_DESPESA = ["gastei", "paguei", "comprei", "usei", "saída", "saida", "consumo", "conta"]
+PALAVRAS_DESPESA = ["gastei", "paguei", "comprei", "usei", "saída", "saida", "consumo", "conta", "fatura"]
 
 # Padrões de correção — detectam mensagens que corrigem uma transação anterior
 PADROES_CORRECAO = [
@@ -75,6 +86,34 @@ _VERBOS_ACAO = {
     "recebi", "ganhei", "entrou", "gastei", "paguei",
     "comprei", "usei", "saida", "consumo", "conta", "entrada",
 }
+
+
+def _normaliza_moeda_br(texto: str) -> str:
+    """
+    Normaliza formatos monetários brasileiros para float padrão.
+
+    Regras:
+        "1.500"     → "1500"        (ponto como separador de milhar)
+        "1.500,00"  → "1500.00"     (milhar + decimal com vírgula)
+        "2.000,50"  → "2000.50"
+        "50,90"     → "50.90"       (vírgula decimal isolada)
+        "15.90"     → "15.90"       (ponto decimal normal — mantido)
+    """
+    # Padrão 1: números com separador de milhar (ponto a cada 3 dígitos).
+    # Ex: "1.500" ou "1.500,00" ou "1.500.000,50"
+    texto = re.sub(
+        r'\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?',
+        lambda m: m.group(0).replace('.', '').replace(',', '.'),
+        texto,
+    )
+    # Padrão 2: decimal isolado com vírgula (sem separador de milhar).
+    # Ex: "50,90" → "50.90"  |  "29,9" → "29.9"
+    texto = re.sub(
+        r'\b(\d+),(\d{1,2})\b',
+        lambda m: f"{m.group(1)}.{m.group(2)}",
+        texto,
+    )
+    return texto
 
 
 def interpret_message(text):
@@ -100,7 +139,7 @@ def interpret_message(text):
         return None
 
     original = text.strip().lower()
-    original = original.replace(",", ".")
+    original = _normaliza_moeda_br(original)
 
     # ------- 0. DETECTAR CORREÇÃO --------
     novo_valor = _detecta_correcao(original)
@@ -244,12 +283,16 @@ def _detecta_categoria(texto):
     """
     Detecta categoria procurando por palavras-chave no texto normalizado.
 
+    Usa correspondência por fronteira de palavra (\b) para evitar falsos positivos
+    como "gas" combinando com "gastei" ou "net" combinando com "presente".
+
     Retorna o nome oficial da categoria (igual ao nome no DB) ou None.
     """
     texto_norm = _normaliza(texto)
     for categoria, palavras in CATEGORIAS.items():
         for palavra in palavras:
-            if _normaliza(palavra) in texto_norm:
+            palavra_norm = _normaliza(palavra)
+            if re.search(r'\b' + re.escape(palavra_norm) + r'\b', texto_norm):
                 return categoria
 
     return None
