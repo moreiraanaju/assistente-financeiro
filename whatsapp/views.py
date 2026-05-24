@@ -13,6 +13,7 @@ from transactions.nlp_parser import interpret_message as parse_message
 from transactions.serializers import TransacaoSerializer
 from whatsapp.context import get_context, set_context
 from whatsapp.gemini import formatar_resumo, interpretar_mensagem
+from transactions.intent_detector import detect_intent
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -175,44 +176,10 @@ def evolution_webhook(request):
     # =========================================================================
     # DETECÇÃO DE INTENÇÃO (CONSULTAS)
     # =========================================================================
-    text_lower = text.lower()
-    tipo_consulta = None
-    extra_params = ""
-
-    # Tenta identificar filtro combinado PRIMEIRO
-    match_combinado = re.search(r'(?:gastei|gastos)\s+(?:com|em|no|na)\s+(\w+).*?(semana|m[êe]s)', text_lower)
-
-    if match_combinado:
-        categoria_detectada = match_combinado.group(1) 
-        periodo_detectado = match_combinado.group(2)   
-        tipo_consulta = "filtro_combinado"
-        extra_params = f"&periodo={periodo_detectado}&categoria={categoria_detectada}"
-
-    # ATENÇÃO: Use ELIF aqui para não sobrescrever o filtro combinado!
-
-    elif re.search(r'\b(semana|semanal)\b', text_lower) and re.search(r'\b(ganhei|recebi|receitas|entradas)\b', text_lower):
-        tipo_consulta = "receitas_semana"
-
-    elif re.search(r'\b(hoje|do dia)\b', text_lower) and re.search(r'\b(gastei|gastos|total|despesa|saidas)\b', text_lower):
-        tipo_consulta = "hoje"
-
-    elif re.search(r'\b(semana|semanal)\b', text_lower) and re.search(r'\b(gastei|gastos|total|despesa)\b', text_lower):
-        tipo_consulta = "semana"
-
-    elif re.search(r'\b(m[êe]s|mensal)\b', text_lower) and re.search(r'\b(gastei|gastos|total|fatura)\b', text_lower):
-        tipo_consulta = "despesas"
-
-    elif re.search(r'\b(categoria|onde gastei)\b', text_lower):
-        tipo_consulta = "categorias"
-
-    elif re.search(r'\b(saldo|quanto tenho|quanto sobrou)\b', text_lower):
-        tipo_consulta = "saldo"
-
-    elif re.search(r'\b(ganhei|recebi|receitas|entradas)\b', text_lower):
-        tipo_consulta = "receitas"
-
-    elif re.search(r'resumo|insights|como est[aã]o|vis[aã]o geral|overview', text_lower):
-        tipo_consulta = "insights"
+    intent = detect_intent(text)
+    tipo_consulta = intent["tipo"] if intent else None
+    extra_params_dict = intent["extra_params"] if intent else {}
+    extra_params = "".join(f"&{k}={v}" for k, v in extra_params_dict.items())
 
     # --- EXECUÇÃO DA CONSULTA ---
     if tipo_consulta:
@@ -253,15 +220,30 @@ def evolution_webhook(request):
                 if tipo_consulta == "filtro_combinado":
                     valor = dados.get("valor", 0.0)
                     cat_nome = dados.get("categoria", "essa categoria").capitalize()
-                    periodo_txt = "nesta semana" if "semana" in extra_params else "neste mês"
+                    periodo_txt = "nesta semana" if extra_params_dict.get("periodo") == "semana" else "neste mês"
                     reply_text = f"🔎 Gastos com *{cat_nome}* {periodo_txt}: R$ {valor:.2f}"
-                
+
                 elif tipo_consulta == "categorias":
                     lista = dados.get("dados", [])
-                    if not lista: reply_text = "🤷‍♂️ Sem gastos por categoria no período."
+                    if not lista:
+                        reply_text = "🤷 Sem gastos por categoria no período."
                     else:
                         items = [f"▫️ {i['categoria']}: R$ {i['valor']:.2f}" for i in lista]
                         reply_text = "📊 *Gastos por Categoria:*\n" + "\n".join(items)
+
+                elif tipo_consulta == "historico":
+                    lista = dados.get("dados", [])
+                    if not lista:
+                        reply_text = "🤷 Nenhuma transação encontrada."
+                    else:
+                        linhas = []
+                        for t in lista:
+                            sinal = "📈" if t["tipo"] == "IN" else "📉"
+                            linhas.append(
+                                f"{sinal} {t['data']} — {t['descricao']} ({t['categoria']}): R$ {t['valor']:.2f}"
+                            )
+                        reply_text = "🧾 *Últimas transações:*\n" + "\n".join(linhas)
+
                 else:
                     valor = dados.get("valor", 0.0)
                     titulos = {
@@ -269,8 +251,9 @@ def evolution_webhook(request):
                         "hoje": "📅 *Hoje:*",
                         "semana": "🗓️ *Semana:*",
                         "despesas": "📉 *Mês:*",
+                        "mes_passado": "📉 *Mês passado:*",
                         "receitas": "📈 *Receitas:*",
-                        "receitas_semana": "🤑 *Receitas (Semana):*"
+                        "receitas_semana": "🤑 *Receitas (Semana):*",
                     }
                     reply_text = f"{titulos.get(tipo_consulta, 'Consulta:')} R$ {valor:.2f}"
             else:

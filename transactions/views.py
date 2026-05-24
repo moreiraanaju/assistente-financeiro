@@ -227,6 +227,25 @@ class ConsultaView(APIView):
           AND user_id = %s;
     """
 
+    SQL_DESPESAS_MES_ANTERIOR = """
+        SELECT SUM(value) AS total_despesas_mes_anterior
+        FROM public.transactions_transacao
+        WHERE type = 'OUT'
+          AND EXTRACT(MONTH FROM date_transaction) = EXTRACT(MONTH FROM NOW() - INTERVAL '1 month')
+          AND EXTRACT(YEAR FROM date_transaction) = EXTRACT(YEAR FROM NOW() - INTERVAL '1 month')
+          AND user_id = %s;
+    """
+
+    SQL_HISTORICO = """
+        SELECT t.type, t.date_transaction::date, t.description,
+               COALESCE(c.name, 'Outros') AS categoria, t.value
+        FROM public.transactions_transacao t
+        LEFT JOIN public.transactions_category c ON t.category_id = c.id
+        WHERE t.user_id = %s
+        ORDER BY t.date_transaction DESC, t.id DESC
+        LIMIT %s;
+    """
+
     def get(self, request):
         tipo = request.query_params.get("tipo")
         categoria_input = request.query_params.get("categoria") 
@@ -296,6 +315,13 @@ class ConsultaView(APIView):
         elif tipo == "categorias":
             query = self.SQL_CATEGORIAS
             is_list_result = True
+        elif tipo == "mes_passado":
+            query = self.SQL_DESPESAS_MES_ANTERIOR
+        elif tipo == "historico":
+            n = min(int(request.query_params.get("n", 5)), 20)
+            params = [user_id, n]
+            query = self.SQL_HISTORICO
+            is_list_result = True
         else:
             return Response({"error": "Tipo inválido"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -306,7 +332,19 @@ class ConsultaView(APIView):
                 
                 if is_list_result:
                     rows = cursor.fetchall()
-                    resultado = [{"categoria": row[0], "valor": float(row[1])} for row in rows]
+                    if tipo == "historico":
+                        resultado = [
+                            {
+                                "tipo": row[0],
+                                "data": str(row[1]),
+                                "descricao": row[2],
+                                "categoria": row[3],
+                                "valor": float(row[4]),
+                            }
+                            for row in rows
+                        ]
+                    else:
+                        resultado = [{"categoria": row[0], "valor": float(row[1])} for row in rows]
                     return Response({"tipo": tipo, "dados": resultado})
                 else:
                     row = cursor.fetchone()
