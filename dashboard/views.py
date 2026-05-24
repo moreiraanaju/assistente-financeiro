@@ -42,8 +42,9 @@ def get_date_range(periodo, now=None):
         start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         next_month = subtract_months(start, -1)
         end = next_month - timedelta(seconds=1)
+        prev_start = subtract_months(start, 1)  # fix: prev_start estava indefinida neste ramo
         prev_end = start - timedelta(seconds=1)
-        
+
     return start, end, prev_start, prev_end
 
 def get_date_range_cards(periodo, now=None):
@@ -198,7 +199,21 @@ def resumo_dashboard(request):
         {"label": p['label'], "receitas": p['receitas'], "despesas": p['despesas']}
         for p in points
     ]
-    
+
+    # 3. TRANSAÇÕES RECENTES (filtradas pelo período dos cards, ordenadas da mais recente)
+    transacoes_recentes_qs = transacoes_cards.select_related('category').order_by('-date_transaction')[:20]
+    transacoes_recentes = [
+        {
+            "id": t.id,
+            "data": timezone.localtime(t.date_transaction).strftime('%d/%m/%Y'),
+            "descricao": t.description or "—",
+            "valor": float(t.value),
+            "tipo": t.type,
+            "categoria": t.category.name if t.category else "Outros",
+        }
+        for t in transacoes_recentes_qs
+    ]
+
     return JsonResponse({
         "saldo": saldo,
         "total_receitas": total_receitas,
@@ -206,5 +221,6 @@ def resumo_dashboard(request):
         "categoria_lider": categoria_lider,
         "variacao_mes_anterior": variacao_mes_anterior,
         "evolucao_semanal": evolucao_semanal,
-        "gastos_por_categoria": gastos_por_categoria
+        "gastos_por_categoria": gastos_por_categoria,
+        "transacoes_recentes": transacoes_recentes,
     })

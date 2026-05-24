@@ -1,0 +1,199 @@
+PLANO DE SPRINTS
+Assistente Financeiro via WhatsApp
+Versão revisada — com redistribuição de carga e RF08
+
+
+
+
+Resumo das Mudanças em Relação ao Plano Original
+
+
+As alterações abaixo foram feitas para aliviar a Sprint 4 (originalmente sobrecarregada) e incluir formalmente o RF08 — tratamento de mensagens ambíguas — na Sprint 3, onde ele tem todas as suas dependências satisfeitas.
+
+
+Sprint
+	O que foi adicionado
+	O que foi removido
+	Sprint 2
+	Padronização de ConsultaView (respostas de saldo, receitas, despesas e categoria)
+	—
+	Sprint 3
+	Cards do dashboard (saldo, receitas, despesas) + Filtro por período + RF08 (ambiguidade: sinal da IA + tratamento no webhook)
+	—
+	Sprint 4
+	—
+	Padronização de ConsultaView, cards do dashboard e filtro por período (antecipados)
+	
+
+
+
+🟢  SPRINT 1
+Análise e Preparação da Arquitetura
+Compreender o sistema atual e preparar a integração sem quebrar o fluxo existente
+	
+
+👤 Pessoa 1 — IA e Interpretação
+	* Analisar o funcionamento do parser.py atual
+* Entender extração de: valor, tipo e descrição
+* Definir formato de saída mantendo compatibilidade com o backend
+* Criar função inicial interpret_message() — sem integrar ao sistema ainda
+	
+
+👥 Pessoa 2 — Backend
+	* Analisar o fluxo do WebhookTransactionView
+* Separar etapas: interpretação → categorização → persistência
+* Preparar ponto de integração para a nova função
+* Garantir que o parser atual continue funcionando
+	
+
+👥 Pessoa 3 — Dashboard
+	* Definir layout do dashboard (wireframe)
+* Definir quais cards e gráficos serão exibidos
+* Iniciar estrutura básica do frontend
+	
+
+✔ Entrega esperada
+* Pessoa 1: função interpret_message() criada e compatível com o backend
+* Pessoa 2: backend preparado para trocar o parser
+* Pessoa 3: estrutura inicial do dashboard definida
+	
+
+
+
+🟡  SPRINT 2
+Substituição do Parser
+Colocar a nova interpretação no fluxo real de registro de transações
+	
+
+👤 Pessoa 1 — IA e Interpretação
+	* Implementar interpretação de mensagens reais
+* Identificar: valor, tipo (receita/despesa) e descrição
+* Testar com diferentes formatos de mensagens em português
+* Garantir retorno no formato esperado pelo backend
+	
+
+👥 Pessoa 2 — Backend
+	* Substituir chamada de parse_message() pela nova função
+* Integrar interpretação ao fluxo do webhook
+* Manter: model, serializer e services.py para categorização
+* Ajustar resposta enviada ao usuário
+* ⟶ [NOVO] Organizar e padronizar ConsultaView para respostas de saldo, receitas, despesas e categoria
+	
+
+👥 Pessoa 3 — Dashboard
+	* Implementar listagem de transações
+* Consumir dados reais do backend
+* Validar se os dados exibidos estão corretos
+	
+
+⚠ Mudança: ConsultaView antecipada da Sprint 4 para esta sprint, aliviando a carga final.
+	
+
+✔ Entrega esperada
+* Mensagem enviada → interpretada → salva → exibida no dashboard
+* ConsultaView padronizada para os 4 tipos de resposta
+	
+
+
+
+🟠  SPRINT 3
+Contexto Conversacional e RF08
+Interações mais naturais, contexto por usuário e tratamento de ambiguidade
+	
+
+👤 Pessoa 1 — IA e Interpretação
+	* Implementar interpretação de mensagens incompletas
+* Implementar tratamento de correções simples (ex: 'na verdade foi 30')
+* ⟶ [NOVO — RF08] Identificar casos de baixa confiança na interpretação e retornar sinal de ambiguidade em vez de resultado
+	
+
+👥 Pessoa 2 — Backend
+	* Implementar lógica de complemento de informações
+* Ajustar webhook para lidar com contexto simples usando Redis (chave: contexto:{numero})
+* ⟶ [NOVO — RF08] Tratar sinal de ambiguidade: enviar pergunta ao usuário e aguardar resposta dentro do contexto
+* Implementar fluxo de confirmação quando faltar dado
+	
+
+👥 Pessoa 3 — Dashboard
+	* ⟶ [NOVO] Implementar cards de resumo: saldo, receitas e despesas
+* ⟶ [NOVO] Implementar filtro por período
+* Implementar gráficos: gastos por categoria e evolução temporal
+* Validar consistência dos dados exibidos
+	
+
+⚠ Mudança: RF08 formalmente incluído nesta sprint. Cards e filtro por período antecipados da Sprint 4.
+	
+
+Nota técnica — Redis: o contexto conversacional deve ser armazenado com chave contexto:{numero_whatsapp} e TTL de 10 minutos. Isso garante isolamento por usuário e expiração automática de contextos abandonados.
+
+
+✔ Entrega esperada
+* Sistema mais inteligente: mensagens incompletas, correções e ambiguidade tratadas
+* Contexto conversacional por usuário funcionando via Redis
+* RF08 implementado: sinal de ambiguidade + fluxo de confirmação no webhook
+* Dashboard com cards, filtro por período e gráficos funcionando
+	
+
+
+
+🔵  SPRINT 4
+Consultas e Insights Financeiros
+Transformar o sistema em assistente financeiro, não apenas registrador
+	
+
+👤 Pessoa 1 — IA e Interpretação
+	* Implementar interpretação de consultas: saldo, gastos, categorias
+* Diferenciar mensagens de registro vs. consulta
+	
+
+👥 Pessoa 2 — Backend
+	* Implementar geração de resumo financeiro (insights sob demanda)
+* Padronizar respostas de consulta já organizadas na Sprint 2
+* Dar suporte aos dados necessários para o dashboard
+	
+
+👥 Pessoa 3 — Dashboard
+	* Integrar dashboard com endpoints de consulta
+* Validar consistência final dos dados exibidos
+	
+
+⚠ Mudança: Sprint 4 aliviada: ConsultaView (Sprint 2), cards e filtro por período (Sprint 3) já entregues.
+	
+
+✔ Entrega esperada
+* Consultas funcionando no WhatsApp via linguagem natural
+* Insights financeiros gerados sob demanda
+* Dashboard completo integrado com backend (MVP)
+	
+
+
+
+🟣  SPRINT 5
+Refinamento, Testes e Validação
+Finalizar o sistema, corrigir problemas e preparar apresentação
+	
+
+👤 Pessoa 1 — IA e Interpretação
+	* Ajustar erros de interpretação identificados nos testes
+* Melhorar precisão com base em mensagens reais
+	
+
+👥 Pessoa 2 — Backend
+	* Corrigir bugs de integração
+* Revisar fluxo completo: webhook → banco → resposta
+	
+
+👥 Pessoa 3 — Dashboard
+	* Melhorar visual e organização dos dados
+* Ajustar gráficos e filtros com base no feedback
+	
+
+👥 Todas
+	* Testar fluxos principais: registro, consulta e dashboard
+* Validar com 3 a 5 usuários reais
+* Coletar feedback e ajustar o sistema
+* Preparar apresentação final
+	
+
+✔ Entrega esperada
+* Sistema completo, funcional e pronto para demonstração

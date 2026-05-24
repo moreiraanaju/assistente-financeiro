@@ -26,6 +26,7 @@ VERSÃO 3.1 - Correções:
 """
 
 import re
+# pyrefly: ignore [missing-import]
 from unidecode import unidecode
 
 
