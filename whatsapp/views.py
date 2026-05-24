@@ -62,6 +62,16 @@ def evolution_webhook(request):
     if not number:
         return JsonResponse({"status": "ignored", "reason": "no_number"})
 
+    # Resolve o usuário pelo número de WhatsApp
+    auth_user = get_auth_user_by_number(number)
+    if auth_user is None:
+        send_evolution_message(
+            number,
+            "⚠️ Seu número não está cadastrado no sistema. "
+            "Entre em contato com o suporte para criar sua conta."
+        )
+        return HttpResponse("OK")
+
     # Uazapi envia texto em message.text
     text = message.get("text") or message.get("content")
 
@@ -117,17 +127,15 @@ def evolution_webhook(request):
             }
             serializer = TransacaoSerializer(data=transaction_data)
             if serializer.is_valid():
-                user = User.objects.first()
-                if user:
-                    serializer.save(user=user)
-                    cat_nome = categoria.name if categoria else "Outros"
-                    set_context(number, {
-                        "ultimo_texto": text,
-                        "ultimo_parsed": parsed_data,
-                        "timestamp": timezone.now().isoformat(),
-                    })
-                    send_evolution_message(number, f"✅ Salvo em *{cat_nome}*! \nValor: R$ {parsed_data['valor']:.2f}")
-                    return HttpResponse("OK")
+                serializer.save(user=auth_user)
+                cat_nome = categoria.name if categoria else "Outros"
+                set_context(number, {
+                    "ultimo_texto": text,
+                    "ultimo_parsed": parsed_data,
+                    "timestamp": timezone.now().isoformat(),
+                })
+                send_evolution_message(number, f"✅ Salvo em *{cat_nome}*! \nValor: R$ {parsed_data['valor']:.2f}")
+                return HttpResponse("OK")
 
     # =========================================================================
     # COMPLEMENTAÇÃO DE CONTEXTO
@@ -160,17 +168,15 @@ def evolution_webhook(request):
         }
         serializer = TransacaoSerializer(data=transaction_data)
         if serializer.is_valid():
-            user = User.objects.first()
-            if user:
-                serializer.save(user=user)
-                cat_nome = categoria.name if categoria else "Outros"
-                set_context(number, {
-                    "ultimo_texto": text,
-                    "ultimo_parsed": parsed_complementado,
-                    "timestamp": timezone.now().isoformat(),
-                })
-                send_evolution_message(number, f"✅ Salvo em *{cat_nome}*! \nValor: R$ {novo_valor:.2f}")
-                return HttpResponse("OK")
+            serializer.save(user=auth_user)
+            cat_nome = categoria.name if categoria else "Outros"
+            set_context(number, {
+                "ultimo_texto": text,
+                "ultimo_parsed": parsed_complementado,
+                "timestamp": timezone.now().isoformat(),
+            })
+            send_evolution_message(number, f"✅ Salvo em *{cat_nome}*! \nValor: R$ {novo_valor:.2f}")
+            return HttpResponse("OK")
 
     # =========================================================================
     # DETECÇÃO DE INTENÇÃO (CONSULTAS)
@@ -221,7 +227,7 @@ def evolution_webhook(request):
             base_url = os.environ.get("API_BASE_URL", "http://127.0.0.1:8000")
 
             if tipo_consulta == "insights":
-                response = requests.get(f"{base_url}/api/insights/", timeout=5)
+                response = requests.get(f"{base_url}/api/insights/?user_id={auth_user.id}", timeout=5)
                 dados = response.json()
                 if response.status_code == 200:
                     reply_text = formatar_resumo(dados)
@@ -245,7 +251,7 @@ def evolution_webhook(request):
                 send_evolution_message(number, reply_text)
                 return HttpResponse("OK")
 
-            url_api = f"{base_url}/api/consulta/?tipo={tipo_consulta}{extra_params}"
+            url_api = f"{base_url}/api/consulta/?tipo={tipo_consulta}{extra_params}&user_id={auth_user.id}"
             response = requests.get(url_api, timeout=5)
             dados = response.json()
 
@@ -297,32 +303,28 @@ def evolution_webhook(request):
         if parsed_data.get("is_correcao"):
             from transactions.models import Transacao
             from django.db.models.deletion import ProtectedError
-            user = User.objects.first()
-            if not user:
-                reply_text = "Erro: Sem usuário cadastrado."
+            ultima = Transacao.objects.filter(user=auth_user).first()
+            if not ultima:
+                reply_text = "Não há transação anterior para corrigir."
             else:
-                ultima = Transacao.objects.filter(user=user).first()
-                if not ultima:
-                    reply_text = "Não há transação anterior para corrigir."
-                else:
-                    novo_valor = parsed_data["valor"]
-                    nova = Transacao(
-                        user=ultima.user,
-                        value=novo_valor,
-                        type=ultima.type,
-                        description=ultima.description,
-                        category=ultima.category,
-                        date_transaction=ultima.date_transaction,
+                novo_valor = parsed_data["valor"]
+                nova = Transacao(
+                    user=ultima.user,
+                    value=novo_valor,
+                    type=ultima.type,
+                    description=ultima.description,
+                    category=ultima.category,
+                    date_transaction=ultima.date_transaction,
+                )
+                try:
+                    ultima.delete()
+                    nova.save()
+                    reply_text = f"✅ Corrigi para R$ {novo_valor:.2f}!"
+                except ProtectedError:
+                    reply_text = (
+                        "Não foi possível corrigir: a transação está vinculada "
+                        "a uma mensagem protegida. Entre em contato com o suporte."
                     )
-                    try:
-                        ultima.delete()
-                        nova.save()
-                        reply_text = f"✅ Corrigi para R$ {novo_valor:.2f}!"
-                    except ProtectedError:
-                        reply_text = (
-                            "Não foi possível corrigir: a transação está vinculada "
-                            "a uma mensagem protegida. Entre em contato com o suporte."
-                        )
             send_evolution_message(number, reply_text)
             return HttpResponse("OK")
 
@@ -360,18 +362,14 @@ def evolution_webhook(request):
         serializer = TransacaoSerializer(data=transaction_data)
 
         if serializer.is_valid():
-            user = User.objects.first()
-            if user:
-                serializer.save(user=user)
-                cat_nome = categoria.name if categoria else "Outros"
-                reply_text = f"✅ Salvo em *{cat_nome}*! \nValor: R$ {parsed_data['valor']:.2f}"
-                set_context(number, {
-                    "ultimo_texto": text,
-                    "ultimo_parsed": parsed_data,
-                    "timestamp": timezone.now().isoformat(),
-                })
-            else:
-                reply_text = "Erro: Sem usuário cadastrado."
+            serializer.save(user=auth_user)
+            cat_nome = categoria.name if categoria else "Outros"
+            reply_text = f"✅ Salvo em *{cat_nome}*! \nValor: R$ {parsed_data['valor']:.2f}"
+            set_context(number, {
+                "ultimo_texto": text,
+                "ultimo_parsed": parsed_data,
+                "timestamp": timezone.now().isoformat(),
+            })
         else:
             reply_text = "Erro ao salvar. Verifique o formato."
             print(f">>> ❌ [SERIALIZER] Erros: {serializer.errors}")
@@ -398,18 +396,14 @@ def evolution_webhook(request):
             }
             serializer = TransacaoSerializer(data=transaction_data)
             if serializer.is_valid():
-                user = User.objects.first()
-                if user:
-                    serializer.save(user=user)
-                    cat_nome = categoria.name if categoria else "Outros"
-                    set_context(number, {
-                        "ultimo_texto": text,
-                        "ultimo_parsed": gemini_parsed,
-                        "timestamp": timezone.now().isoformat(),
-                    })
-                    reply_text = f"✅ Salvo em *{cat_nome}*! \nValor: R$ {gemini_parsed['valor']:.2f}"
-                else:
-                    reply_text = "Erro: Sem usuário cadastrado."
+                serializer.save(user=auth_user)
+                cat_nome = categoria.name if categoria else "Outros"
+                set_context(number, {
+                    "ultimo_texto": text,
+                    "ultimo_parsed": gemini_parsed,
+                    "timestamp": timezone.now().isoformat(),
+                })
+                reply_text = f"✅ Salvo em *{cat_nome}*! \nValor: R$ {gemini_parsed['valor']:.2f}"
             else:
                 reply_text = "Não entendi sua mensagem. Tente: 'gastei 50 no mercado' ou 'quanto gastei esse mês?'"
         else:

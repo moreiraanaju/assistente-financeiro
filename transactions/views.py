@@ -229,11 +229,18 @@ class ConsultaView(APIView):
 
     def get(self, request):
         tipo = request.query_params.get("tipo")
-        categoria_input = request.query_params.get("categoria") 
-        
-        usuario = User.objects.first()
-        if not usuario:
-            return Response({"error": "Nenhum usuário cadastrado"}, status=500)
+        categoria_input = request.query_params.get("categoria")
+
+        user_id_param = request.query_params.get("user_id")
+        if user_id_param:
+            try:
+                usuario = User.objects.get(id=user_id_param)
+            except (User.DoesNotExist, ValueError):
+                return Response({"error": "Usuário não encontrado"}, status=404)
+        else:
+            usuario = User.objects.first()
+            if not usuario:
+                return Response({"error": "Nenhum usuário cadastrado"}, status=500)
         user_id = usuario.id
 
         if not tipo:
@@ -376,9 +383,16 @@ class InsightsView(APIView):
     """
 
     def get(self, request):
-        usuario = User.objects.first()
-        if not usuario:
-            return Response({"error": "Nenhum usuário cadastrado"}, status=500)
+        user_id_param = request.query_params.get("user_id")
+        if user_id_param:
+            try:
+                usuario = User.objects.get(id=user_id_param)
+            except (User.DoesNotExist, ValueError):
+                return Response({"error": "Usuário não encontrado"}, status=404)
+        else:
+            usuario = User.objects.first()
+            if not usuario:
+                return Response({"error": "Nenhum usuário cadastrado"}, status=500)
         user_id = usuario.id
 
         try:
