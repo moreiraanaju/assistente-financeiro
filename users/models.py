@@ -1,8 +1,21 @@
 import uuid
+from django.conf import settings
 from django.db import models
 
 
 class User(models.Model):
+    """Perfil de usuário vinculado ao auth.User do Django.
+
+    Armazena o número de WhatsApp e preferências regionais.
+    A ligação com auth.User é feita via auth_user (OneToOneField).
+    """
+    auth_user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='profile',
+        null=True,
+        blank=True,
+    )
     id = models.UUIDField(
         primary_key=True,
         default=uuid.uuid4,
