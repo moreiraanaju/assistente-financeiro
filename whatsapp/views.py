@@ -396,3 +396,16 @@ def evolution_webhook(request):
         send_evolution_message(number, reply_text)
 
     return HttpResponse("OK")
+
+
+def get_auth_user_by_number(number):
+    """Obtém o usuário auth.User a partir do telefone normalizado do WhatsApp."""
+    if not number:
+        return None
+    clean_number = "".join(filter(str.isdigit, number))
+    try:
+        from users.models import User as UserProfile
+        profile = UserProfile.objects.get(phone_number=clean_number)
+        return profile.auth_user
+    except UserProfile.DoesNotExist:
+        return None
