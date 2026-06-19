@@ -1,5 +1,12 @@
-from django.shortcuts import render
+from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth import authenticate, login, logout
+from django.db import transaction
+from django.contrib.auth import get_user_model
+from users.models import User as UserProfile
+from .forms import LoginForm, CadastroForm
+
+User = get_user_model()
 from django.http import JsonResponse
 from django.utils import timezone
 from django.db.models import Sum, Q
@@ -40,6 +47,7 @@ def get_date_range(periodo, now=None):
         prev_end = subtract_months(end, 12)
     else: # mes
         start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        prev_start = subtract_months(start, 1)
         next_month = subtract_months(start, -1)
         end = next_month - timedelta(seconds=1)
         prev_end = start - timedelta(seconds=1)
@@ -199,6 +207,20 @@ def resumo_dashboard(request):
         for p in points
     ]
     
+    # 3. TRANSAÇÕES RECENTES
+    recentes = Transacao.objects.filter(user=request.user).select_related('category').order_by('-date_transaction')[:20]
+    
+    transacoes_data = []
+    for t in recentes:
+        transacoes_data.append({
+            "id": t.id,
+            "data": timezone.localtime(t.date_transaction).strftime('%d/%m/%Y %H:%M'),
+            "descricao": t.description,
+            "valor": float(t.value),
+            "tipo": t.type,
+            "categoria": t.category.name if t.category else "Sem categoria"
+        })
+        
     return JsonResponse({
         "saldo": saldo,
         "total_receitas": total_receitas,
@@ -206,5 +228,71 @@ def resumo_dashboard(request):
         "categoria_lider": categoria_lider,
         "variacao_mes_anterior": variacao_mes_anterior,
         "evolucao_semanal": evolucao_semanal,
-        "gastos_por_categoria": gastos_por_categoria
+        "gastos_por_categoria": gastos_por_categoria,
+        "transacoes": transacoes_data
     })
+
+
+def login_view(request):
+    if request.user.is_authenticated:
+        return redirect('dashboard_index')
+    
+    if request.method == 'POST':
+        form = LoginForm(request.POST)
+        if form.is_valid():
+            email = form.cleaned_data['email']
+            password = form.cleaned_data['password']
+            user = authenticate(request, username=email, password=password)
+            if user is not None:
+                login(request, user)
+                return redirect('dashboard_index')
+            else:
+                form.add_error(None, "E-mail ou senha incorretos.")
+    else:
+        form = LoginForm()
+        
+    return render(request, 'dashboard/login.html', {'form': form})
+
+
+def cadastro_view(request):
+    if request.user.is_authenticated:
+        return redirect('dashboard_index')
+        
+    if request.method == 'POST':
+        form = CadastroForm(request.POST)
+        if form.is_valid():
+            nome = form.cleaned_data['nome']
+            email = form.cleaned_data['email']
+            phone_number = form.cleaned_data['phone_number']
+            password = form.cleaned_data['password']
+            
+            try:
+                with transaction.atomic():
+                    # Criar auth.User com email como username para garantir unicidade
+                    user = User.objects.create_user(
+                        username=email,
+                        email=email,
+                        password=password,
+                        first_name=nome
+                    )
+                    
+                    # Vincular ao perfil de usuário correspondente ao telefone
+                    profile = UserProfile.objects.get(phone_number=phone_number)
+                    profile.auth_user = user
+                    profile.name = nome
+                    profile.save()
+                    
+                # Login automático após cadastro
+                login(request, user, backend='dashboard.backends.EmailBackend')
+                return redirect('dashboard_index')
+            except Exception as e:
+                form.add_error(None, f"Ocorreu um erro ao finalizar seu cadastro: {str(e)}")
+    else:
+        form = CadastroForm()
+        
+    return render(request, 'dashboard/cadastro.html', {'form': form})
+
+
+def logout_view(request):
+    logout(request)
+    return redirect('login')
