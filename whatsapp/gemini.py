@@ -50,6 +50,34 @@ def formatar_resumo(dados: dict) -> str | None:
         return None
 
 
+def responder_mensagem_livre(text: str) -> str | None:
+    system_prompt = (
+        "Você é o Finn, um assistente financeiro pessoal simpático e direto que opera via WhatsApp. "
+        "Você ajuda usuários a registrar gastos e receitas, consultar saldo e entender seus hábitos financeiros. "
+        "Responda de forma curta, amigável e em português brasileiro. "
+        "Se o usuário mandar um cumprimento, cumprimente de volta e explique brevemente o que você faz. "
+        "Se fizer uma pergunta sobre finanças pessoais, responda de forma útil e prática. "
+        "Nunca invente dados financeiros do usuário — para consultas de saldo ou gastos, oriente a perguntar "
+        "'qual meu saldo?' ou 'quanto gastei esse mês?'. Máximo de 3 linhas na resposta."
+    )
+    try:
+        client = _get_client()
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text},
+            ],
+            max_tokens=150,
+            temperature=0.7,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.error(f"Groq responder_mensagem_livre erro: {e}")
+        print(f">>> ❌ [GROQ] Erro em responder_mensagem_livre: {e}")
+        return None
+
+
 def interpretar_mensagem(text: str) -> dict | None:
     prompt = (
         "Você é um parser de mensagens financeiras em português brasileiro. "

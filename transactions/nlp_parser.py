@@ -218,7 +218,12 @@ def _detecta_tipo(texto, numero_str):
     for palavra in PALAVRAS_DESPESA:
         if palavra in texto:
             return "D"
-    
+
+    # Prioridade baixa: padrão "valor de descrição" sem verbo (ex: "85 de luz")
+    # Só ativa se nenhuma palavra-chave reconheceu a mensagem.
+    if re.match(r'^\d+(?:[.,]\d+)?\s+de\s+\w+', texto):
+        return "D"
+
     # Padrão: Despesa por padrão
     return "D"
 
