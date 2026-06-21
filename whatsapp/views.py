@@ -12,7 +12,7 @@ from transactions.services import identificar_categoria
 from transactions.nlp_parser import interpret_message as parse_message
 from transactions.serializers import TransacaoSerializer
 from whatsapp.context import get_context, set_context
-from whatsapp.gemini import formatar_resumo, interpretar_mensagem
+from whatsapp.gemini import formatar_resumo, interpretar_mensagem, responder_mensagem_livre
 from transactions.intent_detector import detect_intent
 
 logger = logging.getLogger(__name__)
@@ -78,6 +78,56 @@ def evolution_webhook(request):
 
     if not text:
         return JsonResponse({"reply": "Nenhuma mensagem válida recebida."})
+
+    # =========================================================================
+    # PROCESSAMENTO MULTILINHAS
+    # =========================================================================
+    if '\n' in text:
+        linhas = [l.strip() for l in text.split('\n') if l.strip()]
+        if len(linhas) > 1:
+            salvas = []
+            falhas = []
+            for linha in linhas:
+                parsed = parse_message(linha)
+                if not parsed:
+                    parsed = interpretar_mensagem(linha)
+                if (parsed and not parsed.get('ambiguo') and not parsed.get('is_correcao')
+                        and parsed.get('valor') and parsed.get('tipo')):
+                    categoria = None
+                    if parsed.get('categoria_texto'):
+                        categoria = Category.objects.filter(name__iexact=parsed['categoria_texto']).first()
+                    if not categoria:
+                        categoria = identificar_categoria(parsed.get('descricao', ''))
+                    if not categoria:
+                        categoria = Category.objects.filter(name='Outros').first()
+                    tipo_banco = 'IN' if parsed['tipo'] == 'R' else 'OUT'
+                    transaction_data = {
+                        'description': parsed.get('descricao', ''),
+                        'value': parsed['valor'],
+                        'type': tipo_banco,
+                        'date_transaction': timezone.now(),
+                        'category': categoria.id if categoria else None,
+                    }
+                    serializer = TransacaoSerializer(data=transaction_data)
+                    if serializer.is_valid():
+                        serializer.save(user=auth_user)
+                        cat_nome = categoria.name if categoria else 'Outros'
+                        salvas.append(f"• R$ {parsed['valor']:.2f} em {cat_nome}")
+                    else:
+                        falhas.append(linha)
+                else:
+                    falhas.append(linha)
+
+            if salvas:
+                n = len(salvas)
+                reply_text = f"✅ {n} transaç{'ões' if n > 1 else 'ão'} salva{'s' if n > 1 else ''}!\n" + "\n".join(salvas)
+                if falhas:
+                    reply_text += "\n⚠️ Não entendi: " + " | ".join(f'"{f}"' for f in falhas)
+            else:
+                reply_text = "Não entendi nenhuma das linhas. Tente: 'gastei 50 no mercado'"
+
+            send_evolution_message(number, reply_text)
+            return HttpResponse("OK")
 
     context = get_context(number)
     print(f">>> 🕵️ [EXTRAÇÃO] Texto: '{text}' | Contexto anterior: {context}")
@@ -390,7 +440,21 @@ def evolution_webhook(request):
             else:
                 reply_text = "Não entendi sua mensagem. Tente: 'gastei 50 no mercado' ou 'quanto gastei esse mês?'"
         else:
-            reply_text = "Não entendi sua mensagem. Tente: 'gastei 50 no mercado' ou 'quanto gastei esse mês?'"
+            dados_financeiros = None
+            try:
+                base_url = os.environ.get("API_BASE_URL", "http://127.0.0.1:8000")
+                resp_insights = requests.get(f"{base_url}/api/insights/?user_id={auth_user.id}", timeout=5)
+                if resp_insights.status_code == 200:
+                    ins = resp_insights.json()
+                    dados_financeiros = {
+                        "saldo": ins.get("saldo_atual", 0.0),
+                        "total_receitas": ins.get("total_receitas_mes", 0.0),
+                        "total_despesas": ins.get("total_despesas_mes", 0.0),
+                        "categoria_lider": ins.get("categoria_lider"),
+                    }
+            except Exception:
+                pass
+            reply_text = responder_mensagem_livre(text, dados_financeiros) or "Não entendi sua mensagem. Tente: 'gastei 50 no mercado' ou 'quanto gastei esse mês?'"
 
     if reply_text:
         send_evolution_message(number, reply_text)

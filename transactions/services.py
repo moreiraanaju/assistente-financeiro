@@ -15,13 +15,14 @@ MAPEAMENTO = {
         "uber", "99", "taxi", "onibus", "gasolina", "posto", "estacionamento"
     ],
     "Casa": [
-        "luz", "agua", "internet", "gas", "condominio", "claro", "vivo", "net", "aluguel"
+        "luz", "agua", "internet", "condominio", "claro", "vivo", "net", "aluguel",
+        "conta de gas", "botijao", "gas encanado",
     ],
     "Saúde": [
         "farmacia", "remedio", "medico", "consulta", "exame"
     ],
     "Lazer": [
-        "cinema", "bar", "viagem", "netflix", "spotify", "ingresso"
+        "cinema", "conta do bar", "viagem", "netflix", "spotify", "ingresso"
     ],
     "Compras": [
         "shopee", "amazon", "roupa", "loja", "shein", "presente"
@@ -34,7 +35,31 @@ MAPEAMENTO = {
     ],
 }
 
- 
+
+KEYWORDS = {
+    "Renda": ["salário", "salario", "renda", "freelance", "recebi", "ganhei", "pagamento",
+              "comissão", "comissao", "bonus", "bônus", "dividendo", "aluguel recebido"],
+    "Alimentação": ["mercado", "supermercado", "restaurante", "lanche", "comida", "almoço",
+                    "almoco", "jantar", "café", "cafe", "padaria", "ifood", "delivery",
+                    "pizza", "hamburguer"],
+    "Transporte": ["uber", "99", "gasolina", "combustivel", "combustível", "ônibus", "onibus",
+                   "metrô", "metro", "estacionamento", "pedágio", "pedagio", "taxi", "táxi"],
+    "Casa": ["aluguel", "condominio", "condomínio", "água", "agua", "luz", "energia",
+             "internet", "telefone", "conta de gas", "botijao", "botijão", "gas encanado",
+             "reforma", "móveis", "moveis"],
+    "Saúde": ["farmácia", "farmacia", "remédio", "remedio", "médico", "medico", "consulta",
+              "academia", "plano de saúde", "hospital", "dentista"],
+    "Educação": ["escola", "faculdade", "curso", "livro", "livraria", "material",
+                 "mensalidade", "estudo", "aula", "uniforme"],
+    "Lazer": ["cinema", "teatro", "show", "viagem", "hotel", "netflix", "spotify",
+              "jogos", "game", "conta do bar", "balada", "festa"],
+    "Compras": ["roupa", "sapato", "calçado", "calcado", "shopping", "loja", "presente",
+                "eletrônico", "eletronico", "celular"],
+    "Investimento": ["investimento", "poupança", "poupanca", "ação", "acao", "fundo",
+                     "tesouro", "criptomoeda", "crypto"],
+}
+
+
 def normalizar_texto(texto: str) -> str:
     if not texto: return ""
     return unidecode(texto).lower().strip()
@@ -73,13 +98,22 @@ def resolver_nome_categoria(termo_busca: str) -> str:
 
 
 def identificar_categoria(descricao: str) -> Category:
-    descricao_normalizada = normalizar_texto(descricao)       
+    descricao_normalizada = normalizar_texto(descricao)
+
+    for categoria, keywords in KEYWORDS.items():
+        for kw in keywords:
+            if normalizar_texto(kw) in descricao_normalizada:
+                try:
+                    return Category.objects.get(name=categoria)
+                except Category.DoesNotExist:
+                    pass
+
     for categoria, palavras in MAPEAMENTO.items():
         for palavra in palavras:
             if palavra in descricao_normalizada:
                 try:
                     return Category.objects.get(name=categoria)
-                except Category.DoesNotExist:        
-                    pass 
+                except Category.DoesNotExist:
+                    pass
 
     return Category.objects.get(name="Outros")
