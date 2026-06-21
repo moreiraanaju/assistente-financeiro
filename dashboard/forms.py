@@ -81,7 +81,9 @@ class CadastroForm(forms.Form):
             profile = UserProfile.objects.get(phone_number=clean_phone)
             # Se o perfil já possui um usuário associado
             if profile.auth_user is not None:
-                raise forms.ValidationError("Este número de telefone já está associado a uma conta cadastrada.")
+                # Se for o usuário temporário criado pelo WhatsApp, permitimos o cadastro
+                if not profile.auth_user.email.endswith("@temp.whatsapp.com"):
+                    raise forms.ValidationError("Este número de telefone já está associado a uma conta cadastrada.")
         except UserProfile.DoesNotExist:
             raise forms.ValidationError(
                 "Não é possível finalizar o cadastro, pois o número de telefone não está vinculado "

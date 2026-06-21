@@ -399,13 +399,41 @@ def evolution_webhook(request):
 
 
 def get_auth_user_by_number(number):
-    """Obtém o usuário auth.User a partir do telefone normalizado do WhatsApp."""
+    """Obtém ou cria o usuário auth.User a partir do telefone normalizado do WhatsApp."""
     if not number:
         return None
     clean_number = "".join(filter(str.isdigit, number))
-    try:
-        from users.models import User as UserProfile
-        profile = UserProfile.objects.get(phone_number=clean_number)
-        return profile.auth_user
-    except UserProfile.DoesNotExist:
-        return None
+    
+    from users.models import User as UserProfile
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+    
+    # 1. Obtém ou cria o perfil correspondente ao número
+    profile, created = UserProfile.objects.get_or_create(
+        phone_number=clean_number,
+        defaults={
+            "name": "Usuário WhatsApp",
+            "time_zone": "America/Sao_Paulo",
+            "locale": "pt_BR",
+        }
+    )
+    
+    # 2. Se o perfil não tem auth_user, cria um temporário
+    if profile.auth_user is None:
+        temp_username = f"temp_{clean_number}"
+        auth_user, user_created = User.objects.get_or_create(
+            username=temp_username,
+            defaults={
+                "first_name": "Usuário WhatsApp",
+                "email": f"{clean_number}@temp.whatsapp.com"
+            }
+        )
+        if user_created:
+            import secrets
+            auth_user.set_password(secrets.token_urlsafe(16))
+            auth_user.save()
+            
+        profile.auth_user = auth_user
+        profile.save()
+        
+    return profile.auth_user
