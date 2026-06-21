@@ -268,17 +268,27 @@ def cadastro_view(request):
             
             try:
                 with transaction.atomic():
-                    # Criar auth.User com email como username para garantir unicidade
-                    user = User.objects.create_user(
-                        username=email,
-                        email=email,
-                        password=password,
-                        first_name=nome
-                    )
-                    
                     # Vincular ao perfil de usuário correspondente ao telefone
                     profile = UserProfile.objects.get(phone_number=phone_number)
-                    profile.auth_user = user
+                    user = profile.auth_user
+                    
+                    if user is not None and user.email.endswith("@temp.whatsapp.com"):
+                        # Atualiza o usuário temporário para ser o definitivo
+                        user.username = email
+                        user.email = email
+                        user.first_name = nome
+                        user.set_password(password)
+                        user.save()
+                    else:
+                        # Fallback seguro (caso por algum motivo não haja usuário temporário)
+                        user = User.objects.create_user(
+                            username=email,
+                            email=email,
+                            password=password,
+                            first_name=nome
+                        )
+                        profile.auth_user = user
+                    
                     profile.name = nome
                     profile.save()
                     
