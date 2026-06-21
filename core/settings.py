@@ -26,6 +26,20 @@ DEBUG = os.environ.get("DEBUG", "0") in ("1", "true", "True")
 
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '*').split(',')
 
+# Configurações de Proxy e Segurança para Produção (HTTPS/Nginx)
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+CSRF_TRUSTED_ORIGINS = []
+csrf_trusted = os.environ.get('CSRF_TRUSTED_ORIGINS')
+if csrf_trusted:
+    CSRF_TRUSTED_ORIGINS = csrf_trusted.split(',')
+else:
+    for host in ALLOWED_HOSTS:
+        host = host.strip()
+        if host and host != '*':
+            CSRF_TRUSTED_ORIGINS.append(f"https://{host}")
+            CSRF_TRUSTED_ORIGINS.append(f"http://{host}")
+
 APPEND_SLASH = False
 
 # Application definition
