@@ -16,8 +16,46 @@
         header {
             background-color: #2c3e50;
             color: #ecf0f1;
-            padding: 1rem;
-            text-align: center;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header-title {
+            margin: 0;
+            font-size: 1.8rem;
+        }
+        .user-identity-placeholder {
+            width: 220px;
+        }
+        .user-identity {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            text-align: left;
+            background-color: hsl(210, 24%, 24%);
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            border: 1px solid hsl(210, 24%, 32%);
+            width: 220px;
+            box-sizing: border-box;
+        }
+        .user-name {
+            font-weight: 600;
+            font-size: 0.95rem;
+            color: hsl(210, 20%, 98%);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            width: 100%;
+        }
+        .user-email {
+            font-size: 0.8rem;
+            color: hsl(210, 15%, 80%);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            width: 100%;
         }
         main {
             padding: 2rem;
@@ -28,7 +66,18 @@
 </head>
 <body>
     <header>
-        <h1>Dashboard Financeiro</h1>
+        {% if request.user.is_authenticated %}
+        <div class="user-identity">
+            <span class="user-name">{{ user_display_name }}</span>
+            <span class="user-email">{{ user_email }}</span>
+        </div>
+        {% else %}
+        <div style="visibility: hidden;" class="user-identity-placeholder"></div>
+        {% endif %}
+        
+        <h1 class="header-title">Dashboard Financeiro</h1>
+        
+        <div style="visibility: hidden;" class="user-identity-placeholder"></div>
     </header>
     <main>
         {% block content %}

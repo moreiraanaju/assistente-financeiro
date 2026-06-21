@@ -77,7 +77,18 @@ def get_date_range_cards(periodo, now=None):
 
 @login_required
 def dashboard_index(request):
-    context = {}
+    user = request.user
+    display_name = user.username
+    try:
+        if hasattr(user, 'profile') and user.profile and user.profile.name:
+            display_name = user.profile.name
+    except Exception:
+        pass
+        
+    context = {
+        'user_display_name': display_name,
+        'user_email': user.email or "",
+    }
     return render(request, 'dashboard/index.html', context)
 
 @login_required
