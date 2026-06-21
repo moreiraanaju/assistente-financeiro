@@ -192,9 +192,9 @@ def evolution_webhook(request):
     # COMPLEMENTAÇÃO DE CONTEXTO
     # =========================================================================
     match_valor = re.search(r'\b(\d+(?:[.,]\d+)?)\b', text)
-    is_mensagem_so_valor = match_valor and re.fullmatch(
-        r'[\w\s]*\d+(?:[.,]\d+)?[\w\s]*', text.strip()
-    ) and not re.search(r'(gastei|recebi|ganhei|paguei|comprei|vendi)', text.lower())
+    is_mensagem_so_valor = bool(match_valor and re.fullmatch(
+        r'R?\$?\s*\d+(?:[.,]\d+)?\s*(reais?)?\s*', text.strip(), re.IGNORECASE
+    ))
 
     if context and is_mensagem_so_valor and context.get("ultimo_parsed"):
         novo_valor = float(match_valor.group(1).replace(",", "."))
@@ -296,7 +296,7 @@ def evolution_webhook(request):
                         for t in lista:
                             sinal = "📈" if t["tipo"] == "IN" else "📉"
                             linhas.append(
-                                f"{sinal} {t['data']} — {t['descricao']} ({t['categoria']}): R$ {t['valor']:.2f}"
+                                f"{sinal} {t['data'][:10].split('-')[2]}/{t['data'][:10].split('-')[1]}/{t['data'][:10].split('-')[0]} — {t['categoria']}: R$ {t['valor']:.2f}"
                             )
                         reply_text = "🧾 *Últimas transações:*\n" + "\n".join(linhas)
 
