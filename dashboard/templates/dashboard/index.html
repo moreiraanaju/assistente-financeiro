@@ -272,8 +272,8 @@
     <div class="user-header">
         <div class="avatar" id="userAvatar"></div>
         <div class="user-info">
-            <h2>{{ request.user.first_name }} {{ request.user.last_name }}</h2>
-            <p>{{ request.user.email }}</p>
+            <h2>{{ user_display_name }}</h2>
+            <p>{{ user_email }}</p>
         </div>
         <select class="period-select" id="periodSelectCards">
             <option value="dia">Hoje</option>
@@ -364,11 +364,13 @@
 <script>
     document.addEventListener("DOMContentLoaded", function () {
         // Definir iniciais
-        const firstName = "{{ request.user.first_name|default:request.user.username|escapejs }}".trim();
-        const lastName = "{{ request.user.last_name|escapejs }}".trim();
+        const displayName = "{{ user_display_name|escapejs }}".trim();
         let initials = '';
-        if (firstName) initials += firstName.charAt(0);
-        if (lastName) initials += lastName.charAt(0);
+        if (displayName) {
+            const parts = displayName.split(' ');
+            if (parts.length > 0 && parts[0]) initials += parts[0].charAt(0);
+            if (parts.length > 1 && parts[parts.length - 1]) initials += parts[parts.length - 1].charAt(0);
+        }
         if (!initials) initials = 'U';
         document.getElementById('userAvatar').textContent = initials.toUpperCase();
 
