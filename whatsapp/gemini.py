@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import random
 from groq import Groq
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,20 @@ def formatar_resumo(dados: dict) -> str | None:
         return None
 
 
-def responder_mensagem_livre(text: str) -> str | None:
+_RESPOSTAS_AFIRMATIVAS = [
+    "Ótimo! 😊 Pode mandar seus gastos quando quiser.",
+    "Perfeito! Estou aqui sempre que precisar. 💪",
+    "Show! É só me chamar. 😄",
+]
+
+_TEXTOS_AFIRMATIVOS = {"sim", "quero sim", "quero", "ok", "certo", "entendi",
+                       "obrigado", "obrigada", "valeu", "👍", "ótimo", "legal"}
+
+
+def responder_mensagem_livre(text: str, dados_financeiros: dict | None = None) -> str | None:
+    if text.strip().lower() in _TEXTOS_AFIRMATIVOS:
+        return random.choice(_RESPOSTAS_AFIRMATIVAS)
+
     system_prompt = (
         "Você é o Finn, um assistente financeiro pessoal simpático e direto que opera via WhatsApp. "
         "Você ajuda usuários a registrar gastos e receitas, consultar saldo e entender seus hábitos financeiros. "
@@ -60,6 +74,17 @@ def responder_mensagem_livre(text: str) -> str | None:
         "Nunca invente dados financeiros do usuário — para consultas de saldo ou gastos, oriente a perguntar "
         "'qual meu saldo?' ou 'quanto gastei esse mês?'. Máximo de 3 linhas na resposta."
     )
+    if dados_financeiros:
+        saldo = dados_financeiros.get("saldo", 0.0)
+        total_receitas = dados_financeiros.get("total_receitas", 0.0)
+        total_despesas = dados_financeiros.get("total_despesas", 0.0)
+        categoria_lider = dados_financeiros.get("categoria_lider") or "nenhuma"
+        system_prompt += (
+            f" Dados financeiros atuais do usuário: saldo R$ {saldo:.2f}, "
+            f"receitas do mês R$ {total_receitas:.2f}, despesas do mês R$ {total_despesas:.2f}, "
+            f"categoria com mais gastos: {categoria_lider}. "
+            "Use esses dados para personalizar sua resposta quando relevante."
+        )
     try:
         client = _get_client()
         response = client.chat.completions.create(

@@ -440,7 +440,21 @@ def evolution_webhook(request):
             else:
                 reply_text = "Não entendi sua mensagem. Tente: 'gastei 50 no mercado' ou 'quanto gastei esse mês?'"
         else:
-            reply_text = responder_mensagem_livre(text) or "Não entendi sua mensagem. Tente: 'gastei 50 no mercado' ou 'quanto gastei esse mês?'"
+            dados_financeiros = None
+            try:
+                base_url = os.environ.get("API_BASE_URL", "http://127.0.0.1:8000")
+                resp_insights = requests.get(f"{base_url}/api/insights/?user_id={auth_user.id}", timeout=5)
+                if resp_insights.status_code == 200:
+                    ins = resp_insights.json()
+                    dados_financeiros = {
+                        "saldo": ins.get("saldo_atual", 0.0),
+                        "total_receitas": ins.get("total_receitas_mes", 0.0),
+                        "total_despesas": ins.get("total_despesas_mes", 0.0),
+                        "categoria_lider": ins.get("categoria_lider"),
+                    }
+            except Exception:
+                pass
+            reply_text = responder_mensagem_livre(text, dados_financeiros) or "Não entendi sua mensagem. Tente: 'gastei 50 no mercado' ou 'quanto gastei esse mês?'"
 
     if reply_text:
         send_evolution_message(number, reply_text)
