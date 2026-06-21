@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="pt-br">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -27,9 +28,17 @@
         }
 
         @keyframes gradientBG {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
+            0% {
+                background-position: 0% 50%;
+            }
+
+            50% {
+                background-position: 100% 50%;
+            }
+
+            100% {
+                background-position: 0% 50%;
+            }
         }
 
         .auth-container {
@@ -46,8 +55,8 @@
             border: 1px solid rgba(255, 255, 255, 0.08);
             border-radius: 24px;
             padding: 2.5rem;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4), 
-                        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
             animation: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
 
@@ -56,6 +65,7 @@
                 opacity: 0;
                 transform: translateY(30px);
             }
+
             to {
                 opacity: 1;
                 transform: translateY(0);
@@ -125,8 +135,8 @@
         .form-input:focus {
             background: rgba(255, 255, 255, 0.08);
             border-color: #a855f7;
-            box-shadow: 0 0 0 4px rgba(168, 85, 247, 0.25), 
-                        0 4px 12px rgba(168, 85, 247, 0.1);
+            box-shadow: 0 0 0 4px rgba(168, 85, 247, 0.25),
+                0 4px 12px rgba(168, 85, 247, 0.1);
         }
 
         .help-text {
@@ -156,8 +166,8 @@
 
         .btn-submit:hover {
             transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(139, 92, 246, 0.6), 
-                        0 0 0 2px rgba(236, 72, 153, 0.4);
+            box-shadow: 0 6px 20px rgba(139, 92, 246, 0.6),
+                0 0 0 2px rgba(236, 72, 153, 0.4);
         }
 
         .btn-submit:active {
@@ -208,84 +218,97 @@
         }
 
         @keyframes shake {
-            0%, 100% { transform: translateX(0); }
-            25% { transform: translateX(-8px); }
-            75% { transform: translateX(8px); }
+
+            0%,
+            100% {
+                transform: translateX(0);
+            }
+
+            25% {
+                transform: translateX(-8px);
+            }
+
+            75% {
+                transform: translateX(8px);
+            }
         }
     </style>
 </head>
+
 <body>
 
-<div class="auth-container">
-    <div class="auth-card">
-        <div class="logo-area">
-            <div class="logo-icon">✨</div>
-            <h1 class="auth-title">Crie sua Conta</h1>
-            <p class="auth-subtitle">Preencha os dados abaixo para se registrar</p>
-        </div>
+    <div class="auth-container">
+        <div class="auth-card">
+            <div class="logo-area">
+                <div class="logo-icon">✨</div>
+                <h1 class="auth-title">Crie sua Conta</h1>
+                <p class="auth-subtitle">Preencha os dados abaixo para se registrar</p>
+            </div>
 
-        {% if form.non_field_errors %}
+            {% if form.non_field_errors %}
             <div class="error-message">
                 {% for error in form.non_field_errors %}
-                    <p>{{ error }}</p>
+                <p>{{ error }}</p>
                 {% endfor %}
             </div>
-        {% endif %}
+            {% endif %}
 
-        <form method="POST" action="{% url 'cadastro' %}">
-            {% csrf_token %}
-            
-            <div class="form-group">
-                <label for="id_nome" class="form-label">Nome Completo</label>
-                {{ form.nome }}
-                {% if form.nome.errors %}
+            <form method="POST" action="{% url 'cadastro' %}">
+                {% csrf_token %}
+
+                <div class="form-group">
+                    <label for="id_nome" class="form-label">Nome Completo</label>
+                    {{ form.nome }}
+                    {% if form.nome.errors %}
                     <span class="form-errors">{{ form.nome.errors.as_text }}</span>
-                {% endif %}
-            </div>
+                    {% endif %}
+                </div>
 
-            <div class="form-group">
-                <label for="id_email" class="form-label">E-mail</label>
-                {{ form.email }}
-                {% if form.email.errors %}
+                <div class="form-group">
+                    <label for="id_email" class="form-label">E-mail</label>
+                    {{ form.email }}
+                    {% if form.email.errors %}
                     <span class="form-errors">{{ form.email.errors.as_text }}</span>
-                {% endif %}
-            </div>
+                    {% endif %}
+                </div>
 
-            <div class="form-group">
-                <label for="id_phone_number" class="form-label">Telefone do WhatsApp</label>
-                {{ form.phone_number }}
-                <span class="help-text">Insira o número (ex: 5511999998888) vinculado à sua conversa com o bot.</span>
-                {% if form.phone_number.errors %}
+                <div class="form-group">
+                    <label for="id_phone_number" class="form-label">Telefone do WhatsApp</label>
+                    {{ form.phone_number }}
+                    <span class="help-text">Insira o número (ex: 551199998888) vinculado à sua conversa com o
+                        bot.</span>
+                    {% if form.phone_number.errors %}
                     <span class="form-errors">{{ form.phone_number.errors.as_text }}</span>
-                {% endif %}
-            </div>
+                    {% endif %}
+                </div>
 
-            <div class="form-group">
-                <label for="id_password" class="form-label">Senha</label>
-                {{ form.password }}
-                {% if form.password.errors %}
+                <div class="form-group">
+                    <label for="id_password" class="form-label">Senha</label>
+                    {{ form.password }}
+                    {% if form.password.errors %}
                     <span class="form-errors">{{ form.password.errors.as_text }}</span>
-                {% endif %}
-            </div>
+                    {% endif %}
+                </div>
 
-            <div class="form-group">
-                <label for="id_password_confirm" class="form-label">Confirmação de Senha</label>
-                {{ form.password_confirm }}
-                {% if form.password_confirm.errors %}
+                <div class="form-group">
+                    <label for="id_password_confirm" class="form-label">Confirmação de Senha</label>
+                    {{ form.password_confirm }}
+                    {% if form.password_confirm.errors %}
                     <span class="form-errors">{{ form.password_confirm.errors.as_text }}</span>
-                {% endif %}
+                    {% endif %}
+                </div>
+
+                <button type="submit" class="btn-submit">
+                    Registrar e Acessar
+                </button>
+            </form>
+
+            <div class="auth-footer">
+                Já tem uma conta? <a href="{% url 'login' %}" class="auth-link">Entre</a>
             </div>
-
-            <button type="submit" class="btn-submit">
-                Registrar e Acessar
-            </button>
-        </form>
-
-        <div class="auth-footer">
-            Já tem uma conta? <a href="{% url 'login' %}" class="auth-link">Entre</a>
         </div>
     </div>
-</div>
 
 </body>
+
 </html>
